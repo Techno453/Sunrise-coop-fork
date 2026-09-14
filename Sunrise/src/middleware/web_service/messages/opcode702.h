@@ -5,6 +5,7 @@
 #include <optional>
 
 #include "../../../state/account/inventory/seen_state.h"
+#include "../../../state/social/native_presence.h"
 #include "../web_service_envelope.h"
 
 namespace sunrise::middleware::web_service::messages::opcode702 {
@@ -13,18 +14,17 @@ namespace sunrise::middleware::web_service::messages::opcode702 {
 inline constexpr std::uint16_t kOpcode = 702;
 /** The full 5360-byte character mirror packs into at most 4800 bytes. */
 inline constexpr std::size_t kPayloadSize = 4800;
-/** Value of the world-state field once the client has entered the world. */
-inline constexpr std::uint8_t kInWorld = 8;
 
 /** Supported fields from the character writeback. */
 struct Request {
     /**
-     * Five-bit field at objB `+12068`, schema path `.0.11.1.0.0.4`. Measured 0 on the orbit
-     * screen, 1 from the launch through the load, 8 after `activity:in_world`.
+     * Native fireteam join-lock mask at objB `+12068`, schema path `.0.11.1.0.0.4`.
+     * The native presence publisher copies user_join_controls[7]; bit 3 closes activity joins.
      */
-    std::uint8_t worldState{};
-    bool hasWorldState{};
+    std::uint8_t joinLockFlags{};
+    bool hasJoinLockFlags{};
     std::optional<state::account::inventory::CharacterNewItems> newItems;
+    state::social::NativePresence presence{};
 };
 
 /**
