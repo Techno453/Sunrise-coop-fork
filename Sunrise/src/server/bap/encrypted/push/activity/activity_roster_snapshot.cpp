@@ -8,7 +8,6 @@
 #include "../../../../../middleware/bap/activity_message/darkness_zone_auth.h"
 #include "../../../../../middleware/content/packages/tables/region_reader.h"
 #include "../../../../../state/activity/defaults/activity_defaults_snapshot.h"
-#include "../../../../../state/activity/destination/activity_destination_spawn_binding.h"
 #include "../../../../../state/activity/membership/activity_membership_query.h"
 #include "../../../../../state/activity/runtime.h"
 #include "../../../../../state/build_data/runtime.h"
@@ -16,6 +15,7 @@
 #include "../../../../gameplay/gameplay_advertisement.h"
 #include "../../../../gameplay/group/group_host_sessions.h"
 #include "activity_arrival.h"
+#include "activity_member_roster.h"
 #include "activity_mission_seed_roster.h"
 #include "internal.h"
 
@@ -101,10 +101,9 @@ bool client_region_ready(const Session& session, const RefreshReport* refresh) n
 
 /** Tests whether the client has reported arrival in its instantiated region. */
 bool client_in_world(const Session& session, const RefreshReport* refresh) noexcept {
-    // ws-702 world state 8 is the arrival report. It does not depend on the player spawn.
-    const state::activity::membership::ClientPlacement placement =
-        client_placement(session, refresh);
-    return placement.entered && client_region_ready(session, refresh);
+    // The current region is reported by this ActivityClient. The ws-702 five-bit field is
+    // instead the fireteam's join-lock mask; an activity that allows joining clears bit 3.
+    return client_region_ready(session, refresh);
 }
 
 /** Merges one staged squad body after the complete cumulative frame reached transport output. */
@@ -342,12 +341,14 @@ build_roster_snapshot(Session& session,
         return RosterOutcome::noLayout;
     }
     const std::uint64_t hostedBubbles = hosted_bubble_mask(session);
-    if (!fill_roster(layout, hostedBubbles, scratch, snapshot.roster)) {
+    if (!fill_roster(layout,
+                     hostedBubbles,
+                     scratch,
+                     snapshot.roster,
+                     session.activity.role == ActivityClientRole::privateCurrent)) {
         return RosterOutcome::noGroups;
     }
 
-    const state::activity::defaults::FallbackPolicy& fallback =
-        defaults.defaultDestination.fallback;
     // One resolution serves this body and the citizen advertisement in message 12. Two would let
     // the join descriptor land in a region record the client is not pending on.
     const EffectiveRegion committedRegion = selected_effective_region(
@@ -618,8 +619,8 @@ build_roster_snapshot(Session& session,
     // carries matches nothing.
     snapshot.playerKey = published_player_key(session);
     snapshot.lifetime = lifetimeState;
-    // Hold the native spawn gate until the ws-702 world state reads 8. A spawn before the fade
-    // arms leaves the screen black.
+    // Wait for this client's committed region. Its native participation and spawn predicates
+    // retain the local loading, partition and world-state checks.
     snapshot.awaitClientSync = !client_in_world(session, refresh);
     // Player_BindComponents walks every type-13 reference and the player datum can name any one of
     // them. So every participation record carries the same player key. Selecting the first slot
@@ -628,21 +629,26 @@ build_roster_snapshot(Session& session,
     // The participation record's `+0` latches only when the region index is known.
     snapshot.region = static_cast<std::uint32_t>(region.index);
     snapshot.hasRegion = true;
-    // The override must name the exact slice set the client is in, so it follows the published
-    // region and is never floored to the bubble's first state. A pair naming the arrival is inert
-    // after a teleport, and the picker then falls back to an arbitrary point.
-    snapshot.spawnSliceSet =
-        region.index >= 0 ? static_cast<std::uint32_t>(region.index) : region.arrival;
-    snapshot.spawnSetHash =
-        state::activity::destination::attachable_spawn_set_hash(selection, fallback.spawnSetHash);
-    // An armed wipe respawns at its checkpoint spawn set, not at the arrival override.
+    state::activity::membership::PendingMutation members{};
+    if (state::activity::membership::prepare_refresh(
+            session.activity.session.sessionId,
+            state::activity::membership::kAbsentRevision,
+            state::activity::membership::kMinimumRefreshBubble,
+            members)
+        && members.hasSnapshot) {
+        fill_member_roster(snapshot, members.memberDirectory, members.snapshot.identity.opaqueSoid);
+    }
+    // The selected arrival already travels in GlobalActivityState. Copying it into lifetime
+    // overrides makes it a persistent named-set requirement for subsequent respawns, bypassing
+    // the client's normal placement choices. Only an explicit host checkpoint owns an override.
     const std::uint32_t checkpoint = state::activity::membership::checkpoint_spawn_hash(
         session.activity.source.sessionId, region.index);
-    if (checkpoint != 0) {
+    if (checkpoint != 0 && checkpoint != message::kAbsentSpawnSetHash) {
+        snapshot.spawnSliceSet =
+            region.index >= 0 ? static_cast<std::uint32_t>(region.index) : region.arrival;
         snapshot.spawnSetHash = checkpoint;
+        snapshot.hasSpawnOverride = true;
     }
-    snapshot.hasSpawnOverride =
-        snapshot.spawnSetHash != 0 && snapshot.spawnSetHash != message::kAbsentSpawnSetHash;
     advance_region_epoch(session, refresh);
     stamp_group_sequences(session, snapshot.roster);
     snapshot.stateSequence = session.activityRosterState;

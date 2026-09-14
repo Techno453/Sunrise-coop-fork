@@ -302,12 +302,14 @@ same_retained_scope(const RetainedSquadGroup& group,
  * left out.
  * @param scratch Lock-owned roster group storage the spans point into.
  * @param roster Receives the groups and the group that binds the player.
- * @return True when every named group was found and one of them binds the player.
+ * @param includeTopLevel Only the private activity owns the destination-wide groups.
+ * @return True when every owned group was found and the private roster binds the player.
  */
 [[nodiscard]] bool fill_roster(const layouts::Definition& layout,
                                std::uint64_t hostedBubbles,
                                Scratch& scratch,
-                               message::Roster& roster) noexcept {
+                               message::Roster& roster,
+                               bool includeTopLevel) noexcept {
     roster = {};
     const std::size_t groupCount =
         std::size_t{layout.rosterGroupCount} + std::size_t{layout.bubbleGroupCount};
@@ -315,7 +317,8 @@ same_retained_scope(const RetainedSquadGroup& group,
         || groupCount > roster.groups.size()) {
         return false;
     }
-    for (std::size_t index = 0; index < layout.rosterGroupCount; ++index) {
+    const std::size_t topLevelCount = includeTopLevel ? layout.rosterGroupCount : 0;
+    for (std::size_t index = 0; index < topLevelCount; ++index) {
         if (!fill_group(layout.rosterGroups[index], scratch, index, roster)) {
             return false;
         }
@@ -329,17 +332,15 @@ same_retained_scope(const RetainedSquadGroup& group,
         if (mask == 0) {
             continue;
         }
-        if (!fill_group(layout.bubbleGroups[index],
-                        scratch,
-                        layout.rosterGroupCount + bubbleGroupCount,
-                        roster)) {
+        if (!fill_group(
+                layout.bubbleGroups[index], scratch, topLevelCount + bubbleGroupCount, roster)) {
             return false;
         }
         bubbleMasks[bubbleGroupCount] = mask;
         ++bubbleGroupCount;
     }
-    roster.topLevelGroupCount = layout.rosterGroupCount;
-    roster.groupCount = std::size_t{layout.rosterGroupCount} + bubbleGroupCount;
+    roster.topLevelGroupCount = topLevelCount;
+    roster.groupCount = topLevelCount + bubbleGroupCount;
     roster.bubbleSubBlocks =
         fill_sub_blocks(std::span(bubbleMasks).first(bubbleGroupCount), scratch, roster);
     // Only a top-level group can bind the player: its object is in every slice set, so the gate
@@ -354,7 +355,10 @@ same_retained_scope(const RetainedSquadGroup& group,
             }
         }
     }
-    return roster.playerKeyGroup != 0;
+    // Public updates apply through their own sync pool. Republishing a private top-level
+    // group there registers another instance and dirties private records that the public
+    // apply pass does not visit (native 4D7470 versus 4D8AB0/4D6430).
+    return !includeTopLevel || roster.playerKeyGroup != 0;
 }
 
 /** Appends one selected-state group and registers its key in its exact authored bubble. */

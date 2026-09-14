@@ -949,6 +949,7 @@ request_type23_override(const state::activity::SessionBinding& binding,
 [[nodiscard]] bool
 request_type31_override(const state::activity::SessionBinding& binding,
                         const ScriptableTarget& target,
+                        std::uint64_t expectedActivityClientGeneration,
                         const ScriptableOutputReservation* reservation = nullptr) noexcept;
 
 /** Queues one type-31 pulse carried by the exact generated group in the current activity seed. */
@@ -1143,12 +1144,16 @@ void read_mission_inputs_after(MissionInputCursor after, MissionInputRead& outpu
 
 /**
  * Reads an override for one exact ActivityClient generation.
- * A state-local request authorized by another generation is atomically canceled here.
+ * A request authorized by another generation remains pending for its own client.
  */
 [[nodiscard]] bool
 pending_scriptable_override_for_activity_client(const state::activity::SessionBinding& binding,
                                                 std::uint64_t activityClientGeneration,
                                                 PendingScriptableOverride& output) noexcept;
+
+/** Withdraws only queued and unstaged controls authorized by a retiring native client. */
+void retire_scriptable_client(const state::activity::SessionBinding& binding,
+                              std::uint64_t generation) noexcept;
 
 /** Cancels the exact instance's raw incident before any later transport staging. */
 [[nodiscard]] bool cancel_pending_incident(const state::activity::SessionBinding& binding) noexcept;

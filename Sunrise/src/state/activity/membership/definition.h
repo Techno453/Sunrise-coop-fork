@@ -60,6 +60,7 @@ struct Identity final {
     std::uint64_t opaqueSoid{};
     /** The role of this second type-23 scalar is not verified. */
     std::uint64_t secondaryOpaque{};
+    bool operator==(const Identity&) const noexcept = default;
 };
 
 /** Spawn state kept for the current activity host, in no wire form. */
@@ -191,11 +192,15 @@ struct MembershipState final {
     /** Set once the client has reported each leg, so message 12 mirrors only reported legs. */
     bool currentReported{};
     bool pendingReported{};
+    /** Distinguish native reports from host-owned initial fallback tokens. */
+    bool transitionReported{};
+    std::uint8_t nativeTransitionToken{};
+    bool teleportReported{};
     /** Bubble the client's last message-18 refresh named as current; -1 before one arrives. */
     std::int32_t bubble{kMinimumRefreshBubble};
     /** Membership revision that refresh said the client had applied. */
     std::uint32_t bubbleRevision{kAbsentRevision};
-    /** The character write-back (ws 702) reports the in-world state while a region is held. */
+    /** The owning client's native current-region leg reports a held region. */
     bool entered{};
     std::uint32_t revision{};
     /** Stable within one session; a world replacement changes it to clear the client table. */
