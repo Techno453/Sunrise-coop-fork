@@ -7,6 +7,7 @@
 #include <string_view>
 
 #include "../../../core/logging/log.h"
+#include "../../../core/settings/settings.h"
 #include "../../hooking/detour.h"
 #include "internal.h"
 
@@ -84,7 +85,8 @@ __declspec(noinline) std::int64_t __fastcall check(void* config, std::byte* prop
     if (original == nullptr) {
         return kNullArgument;
     }
-    if (props == nullptr) {
+    // Shared multiplayer supplies real composition; embedded mode retains upstream policy.
+    if (props == nullptr || core::settings::multiplayer()) {
         return original(config, props);
     }
     std::int32_t count = 0;

@@ -83,7 +83,8 @@ __declspec(noinline) std::uint8_t __fastcall check(void* container,
     if (original == nullptr) {
         return kNotArmed;
     }
-    if (!core::settings::get().client.pinReplicatedRecord) {
+    // Shared multiplayer preserves the owning native activity-slot argument.
+    if (core::settings::multiplayer() || !core::settings::get().client.pinReplicatedRecord) {
         return original(container, reporter, activity, prefix, roleIsLocal, slot);
     }
     if (slot != kRemoteSlot) {

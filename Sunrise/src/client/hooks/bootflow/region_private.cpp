@@ -130,7 +130,15 @@ __declspec(noinline) bool __fastcall reader(std::uint32_t sliceSet) noexcept {
         return true;
     }
     const core::settings::Settings& settings = core::settings::get();
-    const bool forced = settings.client.regionPrivate || state::activity::forced::override_active();
+    // A forced destination normally has no public host to join, so it must load solo. But
+    // when the embedded gameplay host is configured it advertises itself for that
+    // destination, so the region stays public and the client associates and joins it -- the
+    // retail path. Only a disabled host (or the explicit region_private switch) sends a
+    // forced destination solo.
+    const bool embeddedHost =
+        settings.server.gameplay.topology != core::settings::server::gameplay::Topology::disabled;
+    const bool forced = settings.client.regionPrivate
+                        || (state::activity::forced::override_active() && !embeddedHost);
     report(sliceSet, forced);
     return !forced;
 }
