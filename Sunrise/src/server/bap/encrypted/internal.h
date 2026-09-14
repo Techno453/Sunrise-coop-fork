@@ -29,6 +29,8 @@ namespace sunrise::server::bap::encrypted {
 enum class BodyCodec : std::uint8_t {
 
     empty,
+    registerRelayClient,
+    initiateRelayConnection,
 
     accountTranslationResponse,
 
@@ -164,6 +166,11 @@ struct SeasonPassRewardTransaction {
 /** Optional side effect produced while decoding one authenticated service body. */
 
 struct ServiceOutcome {
+    bool hasRelayRegistration{};
+    bool hasRelayConnectivityFailure{};
+    std::optional<middleware::bap::nat_relay::InitiateRelayConnection> relayInitiate;
+    activity_host_manager::PendingStartupReservations startupReservations{};
+    std::unique_ptr<state::social::NativePresence> nativePresence;
 
     bool hasSubscription{};
 
