@@ -8,6 +8,7 @@
 
 #include "../../core/logging/log.h"
 #include "../../middleware/datagen/family4/loadout/loadout_resolver.h"
+#include "../account/public_profiles.h"
 #include "../build_data/runtime.h"
 #include "../investment/store_internal.h"
 #include "runtime.h"
@@ -246,6 +247,9 @@ bool set_selected_character(std::uint64_t characterSoid, bool& changed) noexcept
     investment::store::g_mutex.unlock();
     (void)seed_seasonal_progression();
     changed = !alreadySelected;
+    if (changed) {
+        account::profiles::local_changed();
+    }
     return true;
 }
 
@@ -338,6 +342,7 @@ bool commit_current_activity(PendingCurrentActivity& mutation) noexcept {
         return false;
     }
     investment::store::g_session.activities[prepared.characterIndex] = prepared.activityIndex;
+    account::profiles::local_changed();
     investment::store::g_mutex.unlock();
     return true;
 }
@@ -629,10 +634,7 @@ bool commit_equipment_swap(PendingEquipmentSwap& mutation) noexcept {
 
 /** @return A copy of the active account state, read under the lock. */
 AccountState account_snapshot() noexcept {
-    investment::store::g_mutex.lock();
-    const AccountState snapshot = investment::store::account();
-    investment::store::g_mutex.unlock();
-    return snapshot;
+    return account_snapshot(bound_account());
 }
 
 /** Grants each character the other 2 subclasses of its equipped subclass's class. */

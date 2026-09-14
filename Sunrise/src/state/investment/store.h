@@ -30,6 +30,8 @@ enum class Bank : int {
                         std::string_view settingsSchema,
                         std::string_view settingsDefaults) noexcept;
 void shutdown() noexcept;
+/** Binds an upstream seed account once, preserving all slot-owned investment rows. */
+[[nodiscard]] bool bind_identity(std::uint64_t primarySoid) noexcept;
 [[nodiscard]] bool read_account(AccountState& output) noexcept;
 [[nodiscard]] AccountState account() noexcept;
 [[nodiscard]] bool write_account(const AccountState& value) noexcept;
