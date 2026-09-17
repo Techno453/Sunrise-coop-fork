@@ -331,7 +331,7 @@ selected_character(const state::AccountState& account) noexcept {
         return false;
     }
     // Retain the arm until the account has a character to name.
-    if (state::account::banner_character_soid(state::account_snapshot()) == 0) {
+    if (state::account::banner_character_soid(state::bound_account_snapshot()) == 0) {
         return false;
     }
     touchesScratch = true;
@@ -550,7 +550,7 @@ selected_character(const state::AccountState& account) noexcept {
         || GetTickCount64() < session.artifactFamily4RefreshDueTick) {
         return false;
     }
-    const state::AccountState account = state::account_snapshot();
+    const state::AccountState account = state::bound_account_snapshot();
     const state::CharacterState* selected = selected_character(account);
     if (selected == nullptr) {
         return false;
@@ -604,7 +604,7 @@ selected_character(const state::AccountState& account) noexcept {
         session.artifactResetRefreshCursor = 0;
         return false;
     }
-    const state::AccountState account = state::account_snapshot();
+    const state::AccountState account = state::bound_account_snapshot();
     const state::CharacterState* selected = selected_character(account);
     if (selected == nullptr) {
         return false;

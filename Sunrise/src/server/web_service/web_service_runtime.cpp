@@ -117,7 +117,7 @@ bool note_character_writeback(
         return false;
     }
     auto account = std::unique_ptr<state::AccountState>(new (std::nothrow) state::AccountState{});
-    if (!account || !state::account_snapshot(state::kLocalAccount, *account)) {
+    if (!account || !state::local_account_snapshot(*account)) {
         return false;
     }
     request.presence.characterSoid = state::account::selected_character_soid(*account);
@@ -339,7 +339,7 @@ bool consume(std::span<const std::byte> request,
         // The request's own key is echoed and adopted. An authored id here costs the ship and the
         // banner.
         if (!bootstrap.hasPrimarySoid) {
-            bootstrap.primarySoid = state::account_snapshot().primarySoid;
+            bootstrap.primarySoid = state::bound_account_snapshot().primarySoid;
         }
         state::InvestmentState investment{};
         if (!parsed || !state::investment_snapshot(investment)
@@ -358,7 +358,7 @@ bool consume(std::span<const std::byte> request,
     if (message.opcode == middleware::web_service::messages::opcode501::kOpcode) {
         // Returns a SOID family three already publishes. The request body is not parsed.
         const std::uint64_t characterSoid =
-            state::account::selected_character_soid(state::account_snapshot());
+            state::account::selected_character_soid(state::bound_account_snapshot());
         return middleware::web_service::messages::opcode501::encode_response(
                    message, characterSoid, response, written)
                || encode_echo(message, response, written);

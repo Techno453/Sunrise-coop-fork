@@ -154,9 +154,7 @@ bool open(std::string_view path,
 /** Saves are synchronous, so shutdown only closes the handle and discards session fields. */
 void shutdown() noexcept {
     const std::lock_guard lock(g_mutex);
-    if (!local_account_access()) {
-        return;
-    }
+    // This process owns the database even when teardown runs under a public request scope.
     sqlite3_close_v2(g_database);
     g_database = nullptr;
     g_session = {};
