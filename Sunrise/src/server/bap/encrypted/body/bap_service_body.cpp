@@ -273,7 +273,7 @@ bool process(const ServiceRoute& route,
             sunrise::server::bap::arm_account_resync_everywhere();
         }
         outcome.hasSubscription = webOutcome.hasSubscription;
-        outcome.nativePresence = std::move(webOutcome.nativePresence);
+        outcome.nativePresence = webOutcome.nativePresence;
         outcome.hasRecordClaim = webOutcome.hasRecordClaim;
         outcome.hasArtifactReset = webOutcome.hasArtifactReset;
         outcome.artifactReset = webOutcome.artifactReset;

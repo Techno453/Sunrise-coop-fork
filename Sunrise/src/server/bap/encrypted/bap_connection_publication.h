@@ -23,10 +23,6 @@ struct ConnectionFields {
     /** The join also names the character the player signed in on. */
     std::uint64_t joinCharacterSoid{};
     bool retainsPatchEpoch{};
-    /** Membership revision this transaction's client acknowledgement names. */
-    std::uint32_t acknowledgedMembershipRevision{};
-    /** Set when this transaction carries one client membership acknowledgement. */
-    bool acknowledgesMembership{};
     /** Set when this transaction commits one client-authored type-23 identity. */
     bool receivesClientIdentity{};
     /** Set by a join or a transition-token change, which are the client starting a load. */
