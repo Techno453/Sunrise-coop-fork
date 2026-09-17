@@ -51,7 +51,7 @@ void drive_cinematic_hold(Session& session, std::uint64_t now) noexcept {
     if (root == 0 || !session.queuez.family0Active) {
         return;
     }
-    const bool arrived = client_in_world(session, nullptr);
+    const bool arrived = client_region_ready(session, nullptr);
     if (!arrived && !session.cinematicHeld) {
         session.bannerRepushArmed = true;
         session.bannerRepushRoot = root;
@@ -262,7 +262,7 @@ bool consume_activity_keepalive(Session& session,
     const bool hasPendingIncident =
         active
         && server::activity::host::pending_incident(session.activity.session, pendingIncident);
-    const bool incidentClientReady = client_in_world(session, nullptr);
+    const bool incidentClientReady = client_region_ready(session, nullptr);
     const bool incidentDue =
         hasPendingIncident && incidentClientReady && now >= session.activityIncidentRetryDueTick;
     const bool isPrivate = session.activity.role == ActivityClientRole::privateCurrent;
