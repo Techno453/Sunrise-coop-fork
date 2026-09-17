@@ -23,7 +23,6 @@
 #include "../hooks/machine_id/machine_id_override.h"
 #include "../hooks/membership_probe/membership_probe.h"
 #include "../hooks/network/presence_publication.h"
-#include "../hooks/network/reliable_request_admission.h"
 #include "../hooks/network/runtime.h"
 #include "../hooks/noclip/runtime.h"
 #include "../hooks/package_trust/package_trust_bypass.h"
@@ -86,13 +85,6 @@ bool shutdown() noexcept {
         core::log::write(core::log::Channel::client,
                          core::log::Level::error,
                          "ev=shutdown stage=presence_publication result=fail");
-        ReleaseSRWLockExclusive(&runtime::g_lock);
-        return false;
-    }
-    if (!hooks::reliable_requests::uninstall()) {
-        core::log::write(core::log::Channel::client,
-                         core::log::Level::error,
-                         "ev=shutdown stage=reliable_requests result=fail");
         ReleaseSRWLockExclusive(&runtime::g_lock);
         return false;
     }
