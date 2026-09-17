@@ -170,7 +170,7 @@ struct ServiceOutcome {
     bool hasRelayConnectivityFailure{};
     std::optional<middleware::bap::nat_relay::InitiateRelayConnection> relayInitiate;
     activity_host_manager::PendingStartupReservations startupReservations{};
-    std::unique_ptr<state::social::NativePresence> nativePresence;
+    std::optional<state::social::NativePresence> nativePresence;
 
     bool hasSubscription{};
 
