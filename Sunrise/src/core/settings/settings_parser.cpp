@@ -345,9 +345,6 @@ bool parse(std::string_view json, Settings& output) noexcept {
     if (!parser.parse_root(parsed)) {
         return false;
     }
-    if (parsed.version < kOldestCompatibleSettingsVersion || parsed.version > kSettingsVersion) {
-        return false;
-    }
     // An endpoint or role must never implicitly grant network access.
     if (!parsed.multiplayerEnabled
         && (parsed.compactClient || parsed.compactHost || parsed.configuredRole == Role::host
