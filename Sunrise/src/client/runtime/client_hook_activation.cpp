@@ -39,7 +39,6 @@
 #include "../hooks/package_trust/package_trust_bypass.h"
 #include "../hooks/polled_input/runtime.h"
 #include "../hooks/queuez/queuez_hook_lifecycle.h"
-#include "../hooks/replication/replication_budget.h"
 #include "../hooks/retail_log/retail_log_lifecycle.h"
 #include "../hooks/sense_chain_guard/sense_chain_guard.h"
 #include "../hooks/stall_probe/stall_probe.h"
@@ -175,7 +174,6 @@ void clear_game_targets() noexcept {
         const auto rollbackAdapters = []() noexcept {
             // Each uninstall retains its native ownership when an in-flight call prevents removal.
             bool removed = hooks::presence_publication::uninstall();
-            removed = hooks::replication_budget::uninstall() && removed;
             removed = hooks::instance_mutex::uninstall() && removed;
             removed = hooks::machine_id::uninstall() && removed;
             removed = hooks::account_registration::uninstall() && removed;
@@ -198,13 +196,6 @@ void clear_game_targets() noexcept {
             return false;
         }
         (void)hooks::instance_mutex::install();
-        if (!hooks::replication_budget::install()) {
-            core::log::write(core::log::Channel::client,
-                             core::log::Level::error,
-                             "ev=activate stage=replication_budget result=fail");
-            rollbackAdapters();
-            return false;
-        }
         if (!hooks::presence_publication::install()) {
             core::log::write(core::log::Channel::client,
                              core::log::Level::error,
