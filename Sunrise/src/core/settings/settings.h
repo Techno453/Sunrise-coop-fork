@@ -26,6 +26,8 @@ struct ActivitySdkGenerationSettings final {
  * key needs no raise, because a missing key already takes its default.
  */
 inline constexpr std::uint32_t kSettingsVersion = 18;
+/** Version 18 shares this schema's surviving keys; removed bootflow options are ignored. */
+inline constexpr std::uint32_t kOldestCompatibleSettingsVersion = 18;
 
 /** Parsed read-only process settings. */
 struct Settings {
@@ -34,6 +36,8 @@ struct Settings {
      * every file written before versioning. Checked against kSettingsVersion at load.
      */
     std::uint32_t version{};
+    /** Explicit permission to host or join multiplayer and allow its network endpoints. */
+    bool multiplayerEnabled{};
     bool compactClient{};
     bool compactHost{};
     Role configuredRole{Role::embedded};
@@ -82,7 +86,7 @@ void shutdown() noexcept;
 
 /** Native multiplayer adapters serve both the playing host and joining clients. */
 [[nodiscard]] inline bool multiplayer() noexcept {
-    return role() == Role::host || get().server.upstream.enabled;
+    return get().multiplayerEnabled && (role() == Role::host || get().server.upstream.enabled);
 }
 
 } // namespace sunrise::core::settings
