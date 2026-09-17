@@ -199,7 +199,6 @@ bool activity_replication_view(const state::activity::SessionBinding& binding,
     return ready;
 }
 
-/** Reads the unique ActivityClient whose activity session is the supplied view token. */
 bool activity_replication_view_for_session(std::uint64_t activitySessionId,
                                            ActivityReplicationView& output) noexcept {
     output = {};
@@ -233,7 +232,6 @@ bool activity_replication_view_for_session(std::uint64_t activitySessionId,
     return count == 1;
 }
 
-/** Reads the unique ActivityClient bound to one gameplay group session. */
 bool activity_replication_view_for_group(std::uint64_t groupSessionId,
                                          ActivityReplicationView& output) noexcept {
     output = {};
