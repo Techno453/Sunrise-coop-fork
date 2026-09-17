@@ -26,10 +26,7 @@ struct Fix {
 constexpr std::array kFixes{
     Fix{&stage_character_select_hold, &publish_character_select_hold},
     Fix{&stage_orbit_slice_set, &publish_orbit_slice_set},
-    Fix{&stage_composition_check, &publish_composition_check},
     Fix{&stage_orbit_handoff, &publish_orbit_handoff},
-    Fix{&stage_owner_activity_slot, &publish_owner_activity_slot},
-    Fix{&stage_region_private, &publish_region_private},
 };
 
 /** Marks a fix that staged nothing, so no handle is ever published to it. */
@@ -105,10 +102,7 @@ bool install() noexcept {
 void uninstall() noexcept {
     spawn::uninstall_targets();
     uninstall_world_step();
-    uninstall_region_private();
-    uninstall_owner_activity_slot();
     uninstall_orbit_handoff();
-    uninstall_composition_check();
     uninstall_orbit_slice_set();
     uninstall_character_select_hold();
     g_installed.store(false, std::memory_order_release);

@@ -51,19 +51,6 @@ void publish_orbit_slice_set(const hooking::detour::Handle& handle) noexcept;
 void uninstall_orbit_slice_set() noexcept;
 
 /**
- * Stages the solo composition fix, which clears the count the matchmaking check rejects.
- * @param spec Receives the target and replacement.
- * @return staged when the target was found, unavailable on a miss.
- */
-[[nodiscard]] StageResult stage_composition_check(hooking::detour::Spec& spec) noexcept;
-
-/** Takes the solo composition fix's attached handle, or a detached one. */
-void publish_composition_check(const hooking::detour::Handle& handle) noexcept;
-
-/** Detaches the solo composition fix. */
-void uninstall_composition_check() noexcept;
-
-/**
  * Stages the orbit handoff release, which stops the destination step parking.
  * @param spec Receives the target and replacement.
  * @return staged when the target was found, unavailable on a miss.
@@ -75,34 +62,6 @@ void publish_orbit_handoff(const hooking::detour::Handle& handle) noexcept;
 
 /** Detaches the orbit handoff release. */
 void uninstall_orbit_handoff() noexcept;
-
-/**
- * Stages the owner activity slot force. It pins the participation record to the replicated
- * snapshot at `comp + 496` instead of the local one at `comp + 1256`.
- * @param spec Receives the target and replacement.
- * @return staged when the target was found, unavailable on a miss.
- */
-[[nodiscard]] StageResult stage_owner_activity_slot(hooking::detour::Spec& spec) noexcept;
-
-/** Takes the owner activity slot force's attached handle, or a detached one. */
-void publish_owner_activity_slot(const hooking::detour::Handle& handle) noexcept;
-
-/** Detaches the owner activity slot force. */
-void uninstall_owner_activity_slot() noexcept;
-
-/**
- * Stages the private-region force, so a public region takes the path a private one takes.
- * A public region otherwise holds its slice-set switch until a public activity host connects.
- * @param spec Receives the target and replacement.
- * @return staged when both targets and the call site were found, unavailable on a miss.
- */
-[[nodiscard]] StageResult stage_region_private(hooking::detour::Spec& spec) noexcept;
-
-/** Takes the private-region force's attached handle, or a detached one. */
-void publish_region_private(const hooking::detour::Handle& handle) noexcept;
-
-/** Detaches the private-region force. */
-void uninstall_region_private() noexcept;
 
 /**
  * Finds the boot-flow step accessor behind `in_world`.

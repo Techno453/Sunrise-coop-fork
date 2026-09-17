@@ -36,9 +36,7 @@
     },
     "custom_bootflow_textures": true,
     "socket_menu_routing": false,
-    "reveal_lore_books": true,
-    "region_private": false,
-    "pin_replicated_record": true
+    "reveal_lore_books": true
   },
   "server": {
     "max_players": 32,

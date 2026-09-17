@@ -286,11 +286,8 @@
     <ClCompile Include="src\client\hooks\bootflow\bootflow_hook_lifecycle.cpp" />
     <ClCompile Include="src\client\hooks\bootflow\bootflow_texture_override.cpp" />
     <ClCompile Include="src\client\hooks\bootflow\character_select_hold.cpp" />
-    <ClCompile Include="src\client\hooks\bootflow\composition_check.cpp" />
     <ClCompile Include="src\client\hooks\bootflow\orbit_handoff.cpp" />
-    <ClCompile Include="src\client\hooks\bootflow\owner_activity_slot.cpp" />
     <ClCompile Include="src\client\hooks\bootflow\orbit_slice_set.cpp" />
-    <ClCompile Include="src\client\hooks\bootflow\region_private.cpp" />
     <ClCompile Include="src\client\hooks\bootflow\world_step.cpp" />
     <ClCompile Include="src\client\hooks\bootflow\spawn\slice_set_sample.cpp" />
     <ClCompile Include="src\server\bap\encrypted\push\activity\activity_arrival.cpp" />

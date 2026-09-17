@@ -163,8 +163,7 @@ resolve_generated_world(const Session& session,
 /** @return True only when extracted package data selects a private Bubble Host lane. */
 [[nodiscard]] bool remote_member_allowed(const Session& session,
                                          std::int32_t effectiveRegion) noexcept {
-    const core::settings::Settings& settings = core::settings::get();
-    if (settings.client.regionPrivate || state::activity::forced::override_active()) {
+    if (state::activity::forced::override_active()) {
         return true;
     }
     sdk::generated_world::GeneratedWorldView worldView{};
