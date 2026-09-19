@@ -282,9 +282,8 @@ bool consume(std::span<const std::byte> request,
         return false;
     }
     if (message.opcode == middleware::web_service::messages::opcode702::kOpcode) {
-        if (!note_character_writeback(message, presentation, outcome)) {
-            return false;
-        }
+        // A write-back the server cannot read is still answered; no reply drops the connection.
+        static_cast<void>(note_character_writeback(message, presentation, outcome));
     }
     if (message.opcode == middleware::web_service::messages::opcode205::kOpcode) {
         state::InvestmentState investment{};

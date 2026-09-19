@@ -8,6 +8,7 @@
 
 #include "../../../core/threading/srw_lock.h"
 #include "../../../middleware/bap/activity_message/replicate_membership.h"
+#include "../../../state/activity/destination/activity_destination_public.h"
 #include "../../../state/activity/runtime.h"
 #include "../endpoint/gameplay_endpoint.h"
 #include "../gameplay_log.h"
@@ -442,10 +443,12 @@ void allocate_claimed_host_sessions() noexcept {
     free_retired_host_sessions();
     for (;;) {
         HostSessionBinding pending{};
+        bool publicRegion{};
         AcquireSRWLockShared(&g_hostSessionLock);
         for (const HostSession& row : g_hostSessions) {
             if (row.occupied && row.state == HostSessionState::pending) {
                 pending = row.binding;
+                publicRegion = row.publicRegion;
                 break;
             }
         }
@@ -454,11 +457,22 @@ void allocate_claimed_host_sessions() noexcept {
             return;
         }
 
+        // A public region runs its destination's free-roam activity. The private Bubble Host row,
+        // keyed by its exact source, runs the source activity.
+        state::activity::destination::DestinationSelection destination = pending.source.destination;
+        if (publicRegion
+            && !state::activity::destination::public_destination(pending.source.destination,
+                                                                 destination)) {
+            report(core::log::Level::info,
+                   "ev=group stage=public_activity result=no_free_roam source=%d",
+                   static_cast<int>(pending.source.destination.activityIndex));
+        }
+
         std::uint64_t sessionId = state::activity::kAbsentSessionId;
         state::activity::PendingAllocation allocation{};
         // The commit compares one process-wide State revision, so a frame landing between the
         // prepare and the commit refuses this allocation. The next tick retries it.
-        if (!state::activity::prepare_session(pending.source.destination, sessionId, allocation)
+        if (!state::activity::prepare_session(destination, sessionId, allocation)
             || !state::activity::commit(allocation)) {
             core::log::write(core::log::Channel::server,
                              core::log::Level::warn,
@@ -501,12 +515,13 @@ void allocate_claimed_host_sessions() noexcept {
         }
         report(core::log::Level::info,
                "ev=gameplay stage=activityhost result=allocated session=0x%llX group=0x%016llX "
-               "generation=%llu port=%u held=%zu",
+               "generation=%llu port=%u held=%zu activity=%d",
                static_cast<unsigned long long>(target.sessionId),
                static_cast<unsigned long long>(pending.groupSessionId),
                static_cast<unsigned long long>(pending.generation),
                static_cast<unsigned>(pending.port),
-               occupied);
+               occupied,
+               static_cast<int>(destination.activityIndex));
     }
 }
 

@@ -19,9 +19,7 @@
 #include "../hooks/account_registration/account_registration.h"
 #include "../hooks/assert_handler/assert_handler_lifecycle.h"
 #include "../hooks/async_io/async_io_lifetime_guard.h"
-#include "../hooks/bitmap/bitmap_hook_lifecycle.h"
 #include "../hooks/bootflow/bootflow_hook_lifecycle.h"
-#include "../hooks/cine_auth_probe/cine_auth_probe.h"
 #include "../hooks/cine_probe/cine_probe.h"
 #include "../hooks/config_getter/config_getter_lifecycle.h"
 #include "../hooks/cursor/runtime.h"
@@ -31,16 +29,12 @@
 #include "../hooks/infinite_ammo/infinite_ammo.h"
 #include "../hooks/instance_mutex/instance_mutex_release.h"
 #include "../hooks/machine_id/machine_id_override.h"
-#include "../hooks/membership_probe/membership_probe.h"
-#include "../hooks/network/investment/investment_derived_rebuild.h"
 #include "../hooks/network/presence_publication.h"
 #include "../hooks/network/runtime.h"
 #include "../hooks/noclip/runtime.h"
 #include "../hooks/package_trust/package_trust_bypass.h"
 #include "../hooks/polled_input/runtime.h"
-#include "../hooks/queuez/queuez_hook_lifecycle.h"
 #include "../hooks/retail_log/retail_log_lifecycle.h"
-#include "../hooks/sense_chain_guard/sense_chain_guard.h"
 #include "../hooks/stall_probe/stall_probe.h"
 #include "../hooks/teleport/runtime.h"
 #include "../hooks/world_objects/world_object_registry.h"
@@ -221,9 +215,6 @@ void clear_game_targets() noexcept {
     // Read-only. Some freezes silence the watchdog too; this watcher dumps every thread's rip
     // and stack from its own thread when the game stops calling the pump.
     (void)hooks::stall_probe::install();
-    // A sense-record chain that stops terminating after a slice-set teardown holds the whole
-    // frame graph. The guard logs the runaway chain and skips its walk for that tick.
-    (void)hooks::sense_chain_guard::install();
     // The stock async-I/O wrapper reloads its singleton after pumping it and can observe the
     // legitimate teardown/recreate null window. This optional guard keeps the owner it pumped.
     (void)hooks::async_io::install();
@@ -241,25 +232,13 @@ void clear_game_targets() noexcept {
     (void)hooks::infinite_ammo::install();
     // Resolves the activity config getter here; the hold itself runs on the frame tick.
     (void)hooks::inactivity::install();
-    (void)hooks::queuez::install();
-    // The bitmap reference guard puts the none sentinel in place of a reference outside tag
-    // space. Without it the widget's stored-reference reader faults.
-    (void)hooks::bitmap::install();
-    // Read-only. It reports the status word the activity msg 12 handler writes. That word is the
-    // one thing separating "the client never saw our membership body" from "it saw it and the
-    // world container still did not bind".
-    (void)hooks::membership_probe::install();
     // Read-only. While the prologue-filler boot task runs, it logs once per second which
     // cinematic readiness stage is false, the thing the task's five-second timeout hides.
     (void)hooks::cine_probe::install();
-    // Read-only. Logs the type-6 cinematic Auth chain: the armed gate, the body copy, each
-    // silent start gate with the compared values, and the start outcome.
-    (void)hooks::cine_auth_probe::install();
     // Retains the native handle for package placements without publishing unnamed map objects.
     (void)hooks::world_objects::install();
-    // The server reports investment publications through these and never calls the Client.
-    if (!server::bap::register_client_investment_consumers(
-            &hooks::network::investment::notify_investment_publication,
+    // The server asks for refresh slices through this and never calls the Client otherwise.
+    if (!server::bap::register_client_investment_slice_consumer(
             &content::investment::worker::request_slice)) {
         core::log::write(core::log::Channel::client,
                          core::log::Level::error,

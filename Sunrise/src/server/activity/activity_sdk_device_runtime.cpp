@@ -146,7 +146,8 @@ Status apply_auth_reserved(const sdk::BoundView& view,
                            std::span<const std::byte> body,
                            std::uint16_t bitCount,
                            std::span<const std::byte> sdkBuildSha256,
-                           const host::ScriptableOutputReservation& reservation) noexcept {
+                           const host::ScriptableOutputReservation& reservation,
+                           host::ScriptableOverrideKind kind) noexcept {
     const Status validated = validate_auth(view,
                                            slotRow,
                                            objectTag,
@@ -173,7 +174,8 @@ Status apply_auth_reserved(const sdk::BoundView& view,
         bitCount,
         prepared.effectiveRegion,
         prepared.activityClientGeneration,
-        &reservation);
+        &reservation,
+        kind);
     if (queued) {
         return Status::queued;
     }
@@ -534,7 +536,8 @@ Status fire_trigger(const sdk::BoundView& view, std::uint32_t slotRow) noexcept 
 /** Fires one device's configured trigger against an already-reserved Host output revision. */
 Status fire_trigger_reserved(const sdk::BoundView& view,
                              std::uint32_t slotRow,
-                             const host::ScriptableOutputReservation& reservation) noexcept {
+                             const host::ScriptableOutputReservation& reservation,
+                             bool enabled) noexcept {
     PreparedDevice prepared{};
     const Status status = prepare_trigger(view, slotRow, prepared);
     if (status != Status::ready) {
@@ -548,12 +551,14 @@ Status fire_trigger_reserved(const sdk::BoundView& view,
                   prepared.generatedRosterGroup,
                   prepared.effectiveRegion,
                   prepared.activityClientGeneration,
-                  &reservation)
+                  &reservation,
+                  enabled)
             : server::bap::request_activity_type31_override(view.binding,
                                                             prepared.target,
                                                             prepared.effectiveRegion,
                                                             prepared.activityClientGeneration,
-                                                            &reservation);
+                                                            &reservation,
+                                                            enabled);
     if (queued) {
         return Status::queued;
     }

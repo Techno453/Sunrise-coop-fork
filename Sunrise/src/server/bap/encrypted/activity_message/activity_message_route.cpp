@@ -256,6 +256,12 @@ void report_release_refusal(const service::Request& request,
     plan.joinCharacterSoid = parsed.characterSoid;
     plan.delivery = Delivery::joinNotifications;
     plan.mutationDomain = MutationDomain::entitySlots;
+    // Keep the upstream public-membership switch effective for the co-op initial burst too.
+    // Admission and native identity still commit; only the unsolicited membership is withheld.
+    if (plan.bindingIntent == BindingIntent::publicTarget
+        && !core::settings::get().server.activation.activityPublicMembership) {
+        return true;
+    }
     // Read, never committed: the domain above is what the commit acts on. Every shared join
     // takes its body from this join's own mutation, so the member the client recognises as the
     // local player is its own row in the session the envelope names. Copying the private
@@ -512,9 +518,20 @@ bool process(const ActivityClientBinding& binding,
         prepared = membership::prepare_acknowledgement(request, plan);
         break;
     case IngressAdapter::startActivityOptionalStateRefresh:
-        // The transition policy is compiled in. The release owns no runtime switch that answers a
-        // start-activity request with nothing; deployment settings cover accounts, endpoints,
-        // personas and profiles only.
+        // Off, the request is framed and recorded but no transition policy runs on it.
+        if (!core::settings::get().server.activation.defaultClientActivation) {
+            const receipts::Framed framed = receipts::frame_start_activity(request);
+            DiagnosticBody diagnostic{};
+            diagnostic.consumedBits = framed.consumedBits;
+            diagnostic.status = diagnostic_status(framed, false);
+            static_cast<void>(record(request,
+                                     framed.verdict,
+                                     framed.consumedBits,
+                                     &binding.session,
+                                     binding.bindingGeneration,
+                                     diagnostic));
+            return true;
+        }
         prepared = membership::prepare_start_activity(request, plan);
         break;
     case IngressAdapter::authorityResetAcknowledgement:
@@ -523,6 +540,8 @@ bool process(const ActivityClientBinding& binding,
     case IngressAdapter::authorityAbdicate:
         return prepare_authority_abdication(
             binding, rosterDecode, adapter, request, plan, hasTransaction);
+    case IngressAdapter::peerLeave:
+        return prepare_peer_leave(binding, rosterDecode, adapter, request, plan, hasTransaction);
     case IngressAdapter::authorityRequestPurge:
         return prepare_authority_purge(
             binding, rosterDecode, adapter, request, plan, hasTransaction);

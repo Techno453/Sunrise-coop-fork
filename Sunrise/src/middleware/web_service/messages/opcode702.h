@@ -12,7 +12,7 @@ namespace sunrise::middleware::web_service::messages::opcode702 {
 
 /** Web Service opcode of the character object B write-back. */
 inline constexpr std::uint16_t kOpcode = 702;
-/** The full 5360-byte character mirror packs into at most 4800 bytes. */
+/** The 5360-byte character mirror packs into at most 4800 bytes; shorter bodies are valid. */
 inline constexpr std::size_t kPayloadSize = 4800;
 
 /** Supported fields from the character writeback. */

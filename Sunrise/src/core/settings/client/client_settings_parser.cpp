@@ -15,7 +15,6 @@ bool Parser::client_settings(client::Settings& output, bool& endpointConfigured)
     bool hasCustomBootflowTextures = false;
     bool hasSocketMenuRouting = false;
     bool hasRevealLoreBooks = false;
-    bool hasSkipOrbitCinematicWait = false;
     bool hasServerEndpoint = false;
     bool hasMachineId = false;
     if (consume('}')) {
@@ -64,11 +63,6 @@ bool Parser::client_settings(client::Settings& output, bool& endpointConfigured)
                 return false;
             }
             hasRevealLoreBooks = true;
-        } else if (key == "skip_orbit_cinematic_wait") {
-            if (hasSkipOrbitCinematicWait || !boolean(candidate.skipOrbitCinematicWait)) {
-                return false;
-            }
-            hasSkipOrbitCinematicWait = true;
         } else if (!skip_value(0)) {
             return false;
         }

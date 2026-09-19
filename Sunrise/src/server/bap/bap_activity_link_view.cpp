@@ -107,6 +107,37 @@ bool activity_link_view(const state::activity::SessionBinding& binding,
     return session != nullptr;
 }
 
+bool activity_link_view_for_member(const state::activity::SessionBinding& binding,
+                                   std::uint64_t memberKey,
+                                   ActivityLinkView& output) noexcept {
+    output = {};
+    if (memberKey == 0) {
+        return false;
+    }
+    const std::shared_lock lock(session_lock());
+    const Session* selected = nullptr;
+    for (const auto& session : sessions()) {
+        if (session.id != 0 && session.authenticated
+            && session.activity.role != ActivityClientRole::none
+            && session.activityMemberKey == memberKey
+            && state::activity::same_binding(session.activity.session, binding)) {
+            selected = &session;
+            ++output.matchingLinks;
+        }
+    }
+    if (output.matchingLinks != 1) {
+        return false;
+    }
+    // The generation lookup also validates immutable destination fields and rejects aliases.
+    selected = activity_link_for_generation_locked(
+        binding, selected->activity.bindingGeneration, output.matchingLinks);
+    if (selected == nullptr) {
+        return false;
+    }
+    fill_link_view(*selected, output);
+    return true;
+}
+
 /** Selects the exact live ActivityClient for the client's local world slice. */
 bool current_activity_link_view(std::int32_t localSliceSet,
                                 CurrentActivityLinkView& output) noexcept {

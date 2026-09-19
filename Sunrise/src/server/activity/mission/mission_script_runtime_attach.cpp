@@ -19,6 +19,7 @@
 #include "../../../core/filesystem/path.h"
 #include "../../../core/logging/log.h"
 #include "../../../middleware/crypto/sha256.h"
+#include "../../../state/activity/membership/activity_membership_query.h"
 #include "../../../state/activity/mission/runtime.h"
 #include "../../../state/activity/runtime.h"
 #include "../../../state/activity_sdk/runtime.h"
@@ -105,12 +106,14 @@ reload_authorization(const state::activity::SessionBinding& binding) noexcept {
 }
 
 /**
- * Re-points one open program at the current ActivityClient generation.
+ * Rebuilds one open program view for its exact owning ActivityClient generation.
  * @return True when the instance holds an exact view of the same program.
  */
 [[nodiscard]] bool rebind_instance(RuntimeInstance& instance) noexcept {
     server::bap::ActivityLinkView link{};
-    if (!server::bap::activity_link_view(instance.view.binding, link) || !link.joined) {
+    if (!server::bap::activity_link_view(
+            instance.view.binding, instance.view.activityClientGeneration, link)
+        || !link.joined) {
         return false;
     }
     const sdk::Snapshot catalog = sdk::snapshot();
@@ -139,9 +142,17 @@ reload_authorization(const state::activity::SessionBinding& binding) noexcept {
     instance.identity.playerKey = link.playerKey;
     instance.identity.publicTarget = link.publicTarget;
     // The bridge copies the world generation, so hand the program the rebuilt pair.
-    return lua_vm::rebind(instance.vm,
-                          instance.identity,
-                          sdk_bridge::definition_api(instance.view, instance.worldView));
+    if (!lua_vm::rebind(instance.vm,
+                        instance.identity,
+                        sdk_bridge::definition_api(instance.view, instance.worldView))) {
+        return false;
+    }
+    mission_state::Snapshot snapshot{};
+    if (!mission_state::state_snapshot(instance.view.binding, snapshot)) {
+        return false;
+    }
+    accept_mission_state(instance, snapshot);
+    return true;
 }
 
 /** Folds the activity name into a lowercase file stem; other bytes become single underscores. */
@@ -198,14 +209,16 @@ reload_authorization(const state::activity::SessionBinding& binding) noexcept {
     return true;
 }
 
+/** Writes `<stem>/<stem>.lua`: each mission owns a folder named after its script. */
 [[nodiscard]] bool controller_name(const sdk::Catalog& catalog,
                                    const format::Activity& activity,
                                    std::span<char> output) noexcept {
-    std::array<char, 256> stem{};
+    std::array<char, 120> stem{};
     if (!controller_stem(catalog, activity, stem)) {
         return false;
     }
-    const int length = std::snprintf(output.data(), output.size(), "%s.lua", stem.data());
+    const int length =
+        std::snprintf(output.data(), output.size(), "%s/%s.lua", stem.data(), stem.data());
     return length > 0 && static_cast<std::size_t>(length) < output.size();
 }
 
@@ -260,6 +273,8 @@ reload_authorization(const state::activity::SessionBinding& binding) noexcept {
                                                -1,
                                                wideName.data(),
                                                static_cast<int>(wideName.size()));
+    // Use backslashes; a root with the `\\?\` prefix does not accept `/`.
+    std::replace(wideName.begin(), wideName.end(), L'/', L'\\');
     core::path::Buffer authoredPath = g_scriptRoot;
     if (wideLength <= 1 || !core::path::append(authoredPath, L"\\")
         || !core::path::append(authoredPath, wideName.data())) {
@@ -436,10 +451,20 @@ enum class InitialStateGate : std::uint8_t {
         return InitialStateGate::ready;
     }
     activity_sdk_mission::Snapshot seed{};
+    std::array<sdk::MissionSeedOmission, sdk::kMissionSeedOmitCapacity> omissions{};
+    std::size_t omissionCount = 0;
+    if (!instance.initialStateSelected
+        && !lua_vm::initial_state_omissions(instance.vm, omissions, omissionCount)) {
+        fault_instance(instance, "program initial_state omit list could not be read");
+        return InitialStateGate::failed;
+    }
     const activity_sdk_mission::Status status =
-        instance.initialStateSelected ? activity_sdk_mission::query(instance.view, seed)
-                                      : activity_sdk_mission::select_state(
-                                            instance.view, instance.initialStateRegion, {}, seed);
+        instance.initialStateSelected
+            ? activity_sdk_mission::query(instance.view, seed)
+            : activity_sdk_mission::select_state(instance.view,
+                                                 instance.initialStateRegion,
+                                                 std::span(omissions).first(omissionCount),
+                                                 seed);
     if (status == activity_sdk_mission::Status::outputBusy) {
         return InitialStateGate::pending;
     }
@@ -552,6 +577,14 @@ enum class InitialStateGate : std::uint8_t {
         lua_vm::initial_state_region(instance.vm, instance.initialStateRegion);
     if (instance.initialStateDeclared) {
         instance.activeRegion = instance.initialStateRegion;
+        // The host names the arrival slice set; a launched activity's client names none.
+        state::activity::membership::note_declared_initial_region(instance.view.binding.sessionId,
+                                                                  instance.initialStateRegion);
+        std::uint32_t spawnSet = 0;
+        static_cast<void>(lua_vm::initial_state_spawn_set(instance.vm, spawnSet));
+        // Zero leaves the client on the set its own region names.
+        state::activity::membership::note_declared_spawn_set(instance.view.binding.sessionId,
+                                                             spawnSet);
     }
     if (!bind_mission_state(instance, now)) {
         instance.programStatus = ProgramStatus::programError;
@@ -582,6 +615,7 @@ enum class InitialStateGate : std::uint8_t {
 
 /** Binds one host instance to a free slot once its link, SDK view and world view all resolve. */
 void attach_instance(const host::InstanceSnapshot& hostInstance,
+                     std::span<const state::activity::SessionRosterRow> roster,
                      const sdk::Snapshot& catalog,
                      std::uint64_t now) noexcept {
     if (find_instance(hostInstance.binding) != nullptr) {
@@ -593,7 +627,16 @@ void attach_instance(const host::InstanceSnapshot& hostInstance,
         return;
     }
     server::bap::ActivityLinkView link{};
-    if (!server::bap::activity_link_view(hostInstance.binding, link)) {
+    // Host snapshots are session-scoped and have no client owner yet. The committed primary
+    // native member owns the session-wide program; guests sharing its binding cannot replace it.
+    std::uint64_t memberKey{};
+    for (const auto& row : roster) {
+        if (row.joined && state::activity::same_binding(row.binding, hostInstance.binding)) {
+            memberKey = row.memberKey;
+            break;
+        }
+    }
+    if (!server::bap::activity_link_view_for_member(hostInstance.binding, memberKey, link)) {
         report_attach_result(
             hostInstance.binding, AttachResult::noActivityLink, "no_activity_link");
         return;
@@ -721,7 +764,7 @@ void synchronize_instances(std::uint64_t now) noexcept {
             instance.occupied && is_active(diagnostics, instance.view.binding);
         const bool bindingRetained =
             instance.occupied && state::activity::binding_matches(instance.view.binding);
-        // A generation change only stales the view, so rebind and keep the program.
+        // Rebuild a stale SDK/world view only while the exact client owner remains live.
         if (instance.occupied && bindingActive && bindingRetained && !still_exact(instance)
             && rebind_instance(instance)) {
             log_line(core::log::Level::debug, &instance, "rebind", "generation");
@@ -747,7 +790,8 @@ void synchronize_instances(std::uint64_t now) noexcept {
     publish_fireteam_life(now);
     for (std::size_t index = 0; index < diagnostics.instanceCount; ++index) {
         if (diagnostics.instances[index].active) {
-            attach_instance(diagnostics.instances[index], catalog, now);
+            attach_instance(
+                diagnostics.instances[index], {roster.data(), rosterCount}, catalog, now);
         }
     }
 }

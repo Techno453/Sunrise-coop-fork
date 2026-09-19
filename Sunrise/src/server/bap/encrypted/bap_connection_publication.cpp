@@ -28,11 +28,6 @@ constexpr std::uint64_t kBannerRepushDelayMs = 400;
  * next few RunCallbacks pumps, well under this window.
  */
 constexpr std::uint64_t kAbilityRefreshDelayMs = 500;
-/**
- * How long the roster keeps its faster cadence after a load starts.
- * The slice-set load step costs 9.2 to 14.1 s, so this covers it.
- */
-constexpr std::uint64_t kTransitionWindowMs = 15'000;
 
 /** Process-lifetime generation that rejects delayed epochs after a BAP slot is reused. */
 std::atomic<std::uint64_t> g_nextActivityBindingGeneration{1};
@@ -52,6 +47,9 @@ void release_host_generations(AdvertisementRetains& retains) noexcept {
     retains = {};
 }
 
+/** Releases the old binding while a copied join reply may already own its replacement body. */
+void release_activity_ownership(Session& session, bool preserveJoinPublication) noexcept;
+
 /** Clears all connection state rebuilt by a successful activity join. */
 void reset_join_state(Session& session) noexcept {
     clear_activity_transport(session);
@@ -61,16 +59,17 @@ void reset_join_state(Session& session) noexcept {
     session.activityMemberSet = {};
     session.activityCharacterSoid = 0;
     session.activityKeepaliveDueTick = 0;
-    session.activityRosterDueTick = 0;
-    session.activityTransitionUntilTick = 0;
     session.activityClientIdentitySeenGeneration = 0;
     session.activityClientIdentityPublishedGeneration = 0;
     session.activityPatchEpoch = {};
     session.activityReplicationEpoch = {};
     session.activityRosterGroupLeases = {};
+    session.activityRosterBubbleOrderCount = 0;
+    session.activityRosterBubbleKeyOrderCount = {};
     session.activityRosterSends = 0;
     session.activityRosterRegionBubble = -1;
     session.activityHostStateRevision = 0;
+    session.activityRosterAwaitClientSync = false;
     authority_query::reset(session.activityAuthorityQuery, session.activity.bindingGeneration);
     authority_reset::reset(session.activityAuthorityReset, session.activity.bindingGeneration);
     session.activityIncidentStaged = {};
@@ -124,9 +123,6 @@ ConnectionFields connection_fields(const ServiceOutcome& outcome) noexcept {
         fields.joinIngress = plan->joinIngress;
         fields.joinsActivity = true;
     }
-    // The initial load is a transition too, and its token does not arrive for several seconds.
-    fields.opensTransitionWindow =
-        plan->delivery == activity_message::Delivery::joinNotifications || plan->transitionStarted;
     if (plan->mutationDomain == activity_message::MutationDomain::patchEpoch) {
         fields.patchEpoch = plan->patchEpoch;
         fields.retainsPatchEpoch = true;
@@ -159,7 +155,8 @@ void publish_connection_fields(Session& session,
                                                              session.activity.bindingGeneration);
         }
         if (!publication.preservesActivitySessionBinding) {
-            release_activity_connection(session);
+            release_activity_ownership(
+                session, fields.joinsActivity && session.activityJoinMembershipStaged);
             session.activity = publication.activity;
             reset_join_state(session);
         }
@@ -207,9 +204,6 @@ void publish_connection_fields(Session& session,
         session.activityPatchEpoch.bindingGeneration = session.activity.bindingGeneration;
         session.activityPatchEpoch.seen = session.activity.role != ActivityClientRole::none;
     }
-    if (fields.opensTransitionWindow) {
-        session.activityTransitionUntilTick = GetTickCount64() + kTransitionWindowMs;
-    }
     if (fields.receivesClientIdentity) {
         session.activityClientIdentitySeenGeneration = session.activity.bindingGeneration;
     }
@@ -219,6 +213,8 @@ void publish_connection_fields(Session& session,
     if (fields.joinsActivity) {
         session.activityRosterSends = 0;
         session.activityRosterGroupLeases = {};
+        session.activityRosterBubbleOrderCount = 0;
+        session.activityRosterBubbleKeyOrderCount = {};
         session.activityRosterRegionBubble = -1;
     }
     // A private join burst delivered the seed membership body; commit the matching identity so
@@ -267,7 +263,9 @@ void publish_connection_fields(Session& session,
 
 /** Stages one body's retained host directory until the membership frame has an outcome. */
 void stage_activity_advertisement(Session& session, const AdvertisementRetains& retains) noexcept {
-    discard_staged_advertisement(session);
+    // The new membership body is already staged. Release only the previous directory here;
+    // the failure path discards both the body and its matching directory together.
+    release_host_generations(session.activityAdvertisementStaged.retains);
     session.activityAdvertisementStaged.retains = retains;
     session.activityAdvertisementStaged.staged = true;
 }
@@ -284,14 +282,15 @@ void commit_staged_advertisement(Session& session) noexcept {
 
 /** Releases one staged directory's retains. */
 void discard_staged_advertisement(Session& session) noexcept {
+    push::activity::discard_membership_body_record(session);
     if (session.activityAdvertisementStaged.staged) {
         release_host_generations(session.activityAdvertisementStaged.retains);
         session.activityAdvertisementStaged = {};
     }
 }
 
-/** Releases every exact activity owner held by one BAP connection. */
-void release_activity_connection(Session& session) noexcept {
+namespace {
+void release_activity_ownership(Session& session, bool preserveJoinPublication) noexcept {
     server::activity::host::retire_scriptable_client(session.activity.session,
                                                      session.activity.bindingGeneration);
     session.activityStartupReservations = {};
@@ -321,7 +320,9 @@ void release_activity_connection(Session& session) noexcept {
         }
     }
     clear_activity_transport(session);
-    discard_staged_advertisement(session);
+    if (!preserveJoinPublication) {
+        discard_staged_advertisement(session);
+    }
     release_host_generations(session.activityAdvertisementHeld);
     if (session.activity.hostGeneration != 0) {
         server::gameplay::group::release_host_session(session.activity.hostGeneration);
@@ -343,12 +344,21 @@ void release_activity_connection(Session& session) noexcept {
     session.activityRosterDecode = {};
 }
 
+} // namespace
+
+/** Releases every exact activity owner held by one BAP connection. */
+void release_activity_connection(Session& session) noexcept {
+    release_activity_ownership(session, false);
+}
+
 /** Arms the owed Family-4 and banner re-pushes when the queuez publication asks for them. */
 void arm_repushes(Session& session, const queuez::StagedPublication& queuezPublication) noexcept {
     const std::uint64_t now = GetTickCount64();
     if (queuezPublication.armsAbilityRefresh) {
         session.abilityRefreshDueTick = now + kAbilityRefreshDelayMs;
-        session.abilityRefreshArmed = true;
+        if (session.characterRefreshScope == CharacterRefreshScope::none) {
+            session.characterRefreshScope = CharacterRefreshScope::records;
+        }
     }
     if (queuezPublication.armsFamily4Repush && queuezPublication.family4RepushRoot != 0) {
         session.family4RepushDueTick = now + kFamily4RepushDelayMs;

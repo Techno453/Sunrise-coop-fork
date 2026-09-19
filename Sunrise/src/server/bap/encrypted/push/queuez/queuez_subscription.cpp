@@ -11,6 +11,16 @@
 namespace sunrise::server::bap::encrypted::push {
 namespace {
 
+/** Resolves private account families by their root; other families use the bound viewer. */
+[[nodiscard]] state::AccountHandle
+subscription_account(const middleware::queuez::Subscription& subscription) noexcept {
+    return subscription.familyType == queuez::kBannerFamilyType
+                   || subscription.familyType == queuez::kRosterFamilyType
+                   || subscription.familyType == queuez::kAccountFamilyType
+               ? state::account_for_subscription_root(subscription.familyRootSoid)
+               : state::bound_account();
+}
+
 /**
  * Appends the unsolicited Family-4 companion of a Family-3 subscription.
  * @param scratch Lock-owned transform buffers.
@@ -121,17 +131,15 @@ void append_queuez_notification(Scratch& scratch,
                                 std::size_t& written,
                                 queuez::SessionState& after,
                                 bool& armsRepush,
-                                bool& armsBannerRepush) noexcept {
-    const auto accountHandle =
-        subscription.familyType == queuez::kBannerFamilyType
-                || subscription.familyType == queuez::kRosterFamilyType
-                || subscription.familyType == queuez::kAccountFamilyType
-            ? state::account_for_subscription_root(subscription.familyRootSoid)
-            : state::bound_account();
-    const state::ScopedAccountView accountScope(accountHandle);
+                                bool& armsBannerRepush,
+                                bool ownSnapshotAnswered) noexcept {
+    const state::ScopedAccountView accountScope(subscription_account(subscription));
     after = before;
     armsRepush = false;
     armsBannerRepush = false;
+    if (state::bound_account() == state::kInvalidAccount) {
+        return;
+    }
     // Runs ahead of the dispatch below; inside one family's builder it would leave the other
     // families describing a different account.
     ensure_account_canonical();
@@ -215,7 +223,13 @@ void append_queuez_notification(Scratch& scratch,
         after = stagedAfter;
         return;
     }
-    if (!queuez_frame::append_prepared_frame(scratch, prepared, key, nonce, response, written)) {
+    // The reply that answered this subscribe already carries the snapshot, so only the ladder
+    // moves here and the companions still follow.
+    if (ownSnapshotAnswered) {
+        queuez_frame::clear_object_storage(
+            scratch, prepared.rawClearSize, prepared.compressedClearSize);
+    } else if (!queuez_frame::append_prepared_frame(
+                   scratch, prepared, key, nonce, response, written)) {
         queuez_report::subscription_failure("frame");
         return;
     }
@@ -247,6 +261,60 @@ void append_queuez_notification(Scratch& scratch,
             after = bannerDelivered;
         }
     }
+}
+
+/** Builds the subscribed family's first snapshot and encodes it as one svc-123 body. */
+bool prepare_subscription_answer(Scratch& scratch,
+                                 const queuez::SessionState& before,
+                                 const middleware::queuez::Subscription& subscription,
+                                 std::span<std::byte> body,
+                                 std::size_t& bodySize) noexcept {
+    bodySize = 0;
+    const state::ScopedAccountView accountScope(subscription_account(subscription));
+    const bool validAccount = state::bound_account() != state::kInvalidAccount;
+    if (validAccount) {
+        ensure_account_canonical();
+    }
+    snapshot::Prepared prepared{};
+    bool built = false;
+    if (validAccount && subscription.familyType == queuez::kBannerFamilyType) {
+        const state::AccountState account = state::bound_account_snapshot();
+        const std::uint64_t selected = state::account::banner_character_soid(account);
+        if (selected != 0) {
+            bool publish = true;
+            bool incremental = false;
+            queuez::SessionState staged = before;
+            if (!queuez::stage_family0_subscription(
+                    before, selected, publish, incremental, staged)) {
+                staged = before;
+                incremental = false;
+            }
+            built = snapshot::prepare_banner(scratch,
+                                             subscription.familyRootSoid,
+                                             staged.family0Version,
+                                             incremental ? before.family0Character : 0,
+                                             prepared);
+        }
+    } else if (validAccount) {
+        // A subscribe establishes a fresh client-side store, so the answer is the live full body
+        // even while the push ladder is response-only.
+        built = snapshot::prepare_initial(scratch, subscription, {}, prepared);
+    }
+    middleware::queuez::Family empty{};
+    empty.type = subscription.familyType;
+    empty.rootSoid = subscription.familyRootSoid;
+    empty.flags = middleware::queuez::kFullSnapshotFlag;
+    const std::array families{built ? prepared.family : empty};
+    const bool encoded = middleware::queuez::encode_update(families, body, bodySize);
+    if (built) {
+        queuez_frame::clear_object_storage(
+            scratch, prepared.rawClearSize, prepared.compressedClearSize);
+    }
+    if (!encoded) {
+        bodySize = 0;
+        queuez_report::subscription_failure("answer");
+    }
+    return encoded;
 }
 
 } // namespace sunrise::server::bap::encrypted::push
