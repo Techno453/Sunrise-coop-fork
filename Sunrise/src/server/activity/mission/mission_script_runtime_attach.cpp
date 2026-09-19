@@ -627,12 +627,13 @@ void attach_instance(const host::InstanceSnapshot& hostInstance,
         return;
     }
     server::bap::ActivityLinkView link{};
-    // Host snapshots are session-scoped and have no client owner yet. The committed primary
-    // native member owns the session-wide program; guests sharing its binding cannot replace it.
+    // Host snapshots are session-scoped and have no client owner yet. The lowest joined native
+    // member owns the session-wide program: the primary while present, so a guest sharing its
+    // binding cannot replace it, and the first remaining peer once the primary has left.
     std::uint64_t memberKey{};
     for (const auto& row : roster) {
         if (row.joined && state::activity::same_binding(row.binding, hostInstance.binding)) {
-            memberKey = row.memberKey;
+            memberKey = row.presentMemberKey;
             break;
         }
     }
