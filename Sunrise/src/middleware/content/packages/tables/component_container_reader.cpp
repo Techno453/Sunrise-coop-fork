@@ -45,6 +45,27 @@ bool container_member_at(std::span<const std::byte> blob,
            && read(blob, offset, tag);
 }
 
+/** Finds the container array of one bubble definition. */
+bool bubble_containers(std::span<const std::byte> blob, Array& output) noexcept {
+    output = {};
+    return find_optional_array_at(blob, kBubbleContainerDescriptor, output)
+           && (output.count == 0 || output.elementClass == kBubbleContainerClass);
+}
+
+/** Reads one wide container reference of a bubble definition. */
+bool bubble_container_at(std::span<const std::byte> blob,
+                         const Array& containers,
+                         std::uint64_t index,
+                         std::uint32_t& handle,
+                         std::uint64_t& key) noexcept {
+    handle = kWideReferenceNoHandle;
+    key = 0;
+    std::size_t offset = 0;
+    return element_offset(
+               containers.dataOffset, containers.count, kBubbleContainerStride, index, offset)
+           && read(blob, offset, handle) && read(blob, offset + kWideReferenceKeyOffset, key);
+}
+
 /** Tests one bubble index against a mask. */
 bool bubble_in_mask(std::span<const std::uint8_t> mask, std::size_t index) noexcept {
     const std::size_t byte = index / 8;

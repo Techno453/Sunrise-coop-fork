@@ -499,6 +499,15 @@ void append_owner(BuildContext& context,
                 break;
             }
         }
+        // A map's bubbles also load containers that other package families hold.
+        for (const ContainerIndexEntry& entry : containers.bubbleLoads) {
+            if (context.failed || cancelled(context)) {
+                break;
+            }
+            if (same_stem(context, entry) && !collect_container(context, entry.tag)) {
+                break;
+            }
+        }
         const bool finished = !context.failed && !cancelled(context);
         if (!finished) {
             mark_identity_owner_incomplete(context);

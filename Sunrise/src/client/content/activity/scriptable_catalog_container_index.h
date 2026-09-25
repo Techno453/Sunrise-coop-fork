@@ -26,7 +26,12 @@ struct ContainerIndexEntry final {
  */
 struct ContainerIndex final {
     std::vector<ContainerIndexEntry> entries{};
-    /** False when the class sweep itself refused, which every consumer reports as unresolved. */
+    /**
+     * Containers a bubble definition loads from another package family, each listed under the
+     * stem of that definition. A map loads every container its bubbles name, wherever it is held.
+     */
+    std::vector<ContainerIndexEntry> bubbleLoads{};
+    /** False when a sweep itself refused, which every consumer reports as unresolved. */
     bool complete{};
     /** False when at least one package family had no canonical stem. */
     bool stemsComplete{};
@@ -34,8 +39,9 @@ struct ContainerIndex final {
 
 /**
  * Sweeps the install once for the container class and keeps each tag with its stem.
+ * Bubble definitions are swept too, for the containers they load from other package families.
  * @param source Package directory and borrowed block keys.
- * @param output Receives the entries and the two completeness flags.
+ * @param output Receives the entries, the bubble loads and the two completeness flags.
  * @param cancel Optional cancellation probe.
  * @return True when the sweep finished, cancelled or not.
  */

@@ -27,6 +27,23 @@ inline constexpr std::uint32_t kEntryTableElementClass = 0x80809EF3U;
 inline constexpr std::uint32_t kBlockTableElementClass = 0x80809EEEU;
 /** Tag handles start at this base. */
 inline constexpr std::uint32_t kTagBase = 0x80800000;
+/** Metadata format of the retail layout, whose metadata region holds the hash64 references. */
+inline constexpr std::uint8_t kMetadataFormat = 1;
+/** Metadata format of the beta layout, which has no metadata region. */
+inline constexpr std::uint8_t kBetaMetadataFormat = 0;
+/** A metadata region is refused above this size. The largest installed one is about 160 KiB. */
+inline constexpr std::uint32_t kMaximumMetadataBytes = 64U * 1024U * 1024U;
+/**
+ * A metadata region holds its hash64 reference array descriptor at this offset: the logical row
+ * count, then an offset from the field after it to the array's typed prefix count word.
+ */
+inline constexpr std::size_t kMetadataReferenceDescriptor = 48;
+/** A region too short to hold that descriptor has no reference directory. */
+inline constexpr std::size_t kMinimumReferenceMetadataBytes = 64;
+/** Element class of the hash64 reference array. */
+inline constexpr std::uint32_t kMetadataReferenceClass = 0x80809D02U;
+/** One reference row is a hash64 key, then the tag and the class it names. */
+inline constexpr std::size_t kMetadataReferenceStride = 16;
 /** The package id sits in the bits above the entry index. */
 inline constexpr std::uint32_t kTagEntryBits = 13;
 /** Entry indices sit in the low bits of a tag handle. */
@@ -46,6 +63,12 @@ struct HeaderOffsets {
     static constexpr std::size_t kBlockCount = 0xD0;
     /** File offset of the entry table, whose rows this reader indexes by tag. */
     static constexpr std::size_t kEntryTable = 0x110;
+    /** Metadata format, which says whether the file has a metadata region at all. */
+    static constexpr std::size_t kMetadataFormat = 0x1A;
+    /** File offset of the metadata region. */
+    static constexpr std::size_t kMetadataOffset = 0xF0;
+    /** Byte size of the metadata region. */
+    static constexpr std::size_t kMetadataSize = 0xF4;
 };
 
 /** One 16-byte entry-table record. */

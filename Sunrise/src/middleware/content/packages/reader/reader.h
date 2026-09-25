@@ -220,6 +220,17 @@ struct ClassEntry {
 /** Visitor for when the package family is part of the extracted domain key. */
 using ClassEntryVisitor = bool (*)(void* context, const ClassEntry& entry) noexcept;
 
+/** One hash64 reference row: a wide reference's key and the tag and class it names. */
+struct Reference {
+    std::uint64_t key{};
+    std::uint32_t tag{};
+    std::uint32_t classId{};
+};
+static_assert(sizeof(Reference) == layout::kMetadataReferenceStride);
+
+/** Visitor called once per reference row. Returning false stops the scan and fails it. */
+using ReferenceVisitor = bool (*)(void* context, const Reference& reference) noexcept;
+
 /**
  * Reports every installed entry of one tag class.
  * Only the highest patch of each package is scanned, so a tag is reported once.
@@ -252,6 +263,18 @@ using ClassEntryVisitor = bool (*)(void* context, const ClassEntry& entry) noexc
                                       ClassEntryVisitor visitor,
                                       void* context,
                                       ScanResult& result) noexcept;
+
+/**
+ * Reports every hash64 reference row of every installed package.
+ * A wide reference that carries no tag handle resolves through these rows. Only the highest
+ * patch of each package is read, and a package without a metadata region has none.
+ * @param directory Installed packages directory.
+ * @param visitor Required non-owning row consumer.
+ * @param context Caller context passed to the visitor.
+ * @return True when the walk, every header and region read, and every visitor call work.
+ */
+[[nodiscard]] bool
+scan_references(std::wstring_view directory, ReferenceVisitor visitor, void* context) noexcept;
 
 /**
  * Closes the package files the class sweeps keep open.

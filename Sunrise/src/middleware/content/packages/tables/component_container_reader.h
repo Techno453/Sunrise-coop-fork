@@ -27,6 +27,18 @@ inline constexpr std::size_t kContainerMemberDescriptor = 40;
 inline constexpr std::uint32_t kContainerMemberClass = 0x80808BB0U;
 /** One member is a bare tag handle. */
 inline constexpr std::size_t kContainerMemberStride = 4;
+/** Tag class of a bubble definition, which names every container its bubble loads. */
+inline constexpr std::uint32_t kBubbleDefinitionClass = 0x808091E0U;
+/** A bubble definition holds its container array descriptor at this offset. */
+inline constexpr std::size_t kBubbleContainerDescriptor = 8;
+/** Element class of a bubble definition's container array. */
+inline constexpr std::uint32_t kBubbleContainerClass = 0x808084C1U;
+/** One element is a wide reference: a tag handle, a mode word, then a hash64 key. */
+inline constexpr std::size_t kBubbleContainerStride = 16;
+/** A wide reference names its hash64 key at this offset. */
+inline constexpr std::size_t kWideReferenceKeyOffset = 8;
+/** A wide reference that names its target by hash64 key alone carries this handle. */
+inline constexpr std::uint32_t kWideReferenceNoHandle = 0xFFFFFFFFU;
 
 /**
  * Reads the resource one component wraps.
@@ -67,6 +79,29 @@ inline constexpr std::size_t kContainerMemberStride = 4;
                                        const Array& members,
                                        std::uint64_t index,
                                        std::uint32_t& tag) noexcept;
+
+/**
+ * Finds the container array of one bubble definition.
+ * @param blob Whole bubble definition bytes.
+ * @param output Receives the array, with count zero when the bubble loads no container.
+ * @return True when the descriptor is a container array or a valid empty one.
+ */
+[[nodiscard]] bool bubble_containers(std::span<const std::byte> blob, Array& output) noexcept;
+
+/**
+ * Reads one wide container reference of a bubble definition.
+ * @param blob Whole bubble definition bytes.
+ * @param containers Container array that was found.
+ * @param index Element ordinal.
+ * @param handle Receives the tag handle, or `kWideReferenceNoHandle` when only the key names it.
+ * @param key Receives the hash64 key.
+ * @return True when the ordinal is inside the array.
+ */
+[[nodiscard]] bool bubble_container_at(std::span<const std::byte> blob,
+                                       const Array& containers,
+                                       std::uint64_t index,
+                                       std::uint32_t& handle,
+                                       std::uint64_t& key) noexcept;
 
 /**
  * Tests one bubble index against a mask.

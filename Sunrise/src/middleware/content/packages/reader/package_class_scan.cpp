@@ -3,7 +3,9 @@
 #include <algorithm>
 #include <array>
 #include <cstdio>
+#include <cstring>
 #include <span>
+#include <vector>
 
 #include "internal.h"
 
@@ -119,6 +121,152 @@ using SeenSet = std::array<std::uint64_t, kSeenWords>;
     return true;
 }
 
+/**
+ * Reports every row of one metadata region's hash64 reference array.
+ * The array keeps the typed prefix of the package's own tables, and its physical count can exceed
+ * the logical count the descriptor carries.
+ * @param region Whole metadata region.
+ * @param visitor Row consumer.
+ * @param context Caller context passed to the visitor.
+ * @return True when the array is well formed and every visitor call works.
+ */
+[[nodiscard]] bool report_references(std::span<const std::byte> region,
+                                     ReferenceVisitor visitor,
+                                     void* context) noexcept {
+    if (region.size() < layout::kMinimumReferenceMetadataBytes) {
+        return true;
+    }
+    std::uint64_t count = 0;
+    std::int64_t relative = 0;
+    const std::size_t relativeField = layout::kMetadataReferenceDescriptor + sizeof count;
+    std::memcpy(&count, region.data() + layout::kMetadataReferenceDescriptor, sizeof count);
+    std::memcpy(&relative, region.data() + relativeField, sizeof relative);
+    if (count == 0) {
+        return true;
+    }
+    std::uint32_t marker = 0;
+    // The offset lands on the prefix count word, which the four-byte table marker precedes.
+    if (relative < static_cast<std::int64_t>(sizeof marker)) {
+        return false;
+    }
+    const std::uint64_t prefixAt =
+        relativeField + static_cast<std::uint64_t>(relative) - sizeof marker;
+    if (prefixAt > region.size() || region.size() - prefixAt < layout::kTableArrayPrefixSize) {
+        return false;
+    }
+    const auto prefix = static_cast<std::size_t>(prefixAt);
+    const std::size_t data = prefix + layout::kTableArrayPrefixSize;
+    std::uint64_t physicalCount = 0;
+    std::uint32_t elementClass = 0;
+    std::memcpy(&marker, region.data() + prefix, sizeof marker);
+    std::memcpy(&physicalCount, region.data() + prefix + sizeof marker, sizeof physicalCount);
+    std::memcpy(&elementClass,
+                region.data() + prefix + sizeof marker + sizeof physicalCount,
+                sizeof elementClass);
+    if (marker != layout::kTableArrayMarker || elementClass != layout::kMetadataReferenceClass
+        || physicalCount < count
+        || count > (region.size() - data) / layout::kMetadataReferenceStride) {
+        return false;
+    }
+    for (std::uint64_t index = 0; index < count; ++index) {
+        Reference reference{};
+        std::memcpy(&reference,
+                    region.data() + data
+                        + static_cast<std::size_t>(index) * layout::kMetadataReferenceStride,
+                    sizeof reference);
+        if (!visitor(context, reference)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/**
+ * Reports the hash64 reference rows of one package's highest patch.
+ * @param directory Installed packages directory.
+ * @param packageId Package id to read.
+ * @param visitor Row consumer.
+ * @param context Caller context passed to the visitor.
+ * @param bytes Reused region storage.
+ * @return True when the header and region read, or the package has no region.
+ */
+[[nodiscard]] bool read_package_references(std::wstring_view directory,
+                                           std::uint16_t packageId,
+                                           ReferenceVisitor visitor,
+                                           void* context,
+                                           std::vector<std::byte>& bytes) noexcept {
+    Path stem{};
+    std::uint32_t patchIndex = 0;
+    Path path{};
+    std::array<std::byte, layout::kHeaderSize> headerBytes{};
+    Header header{};
+    if (!find_latest(directory, packageId, stem, patchIndex) || !build_path(stem, patchIndex, path)
+        || !read_at(path, 0, headerBytes) || !parse_header(headerBytes, header)) {
+        return false;
+    }
+    std::uint8_t format = 0;
+    std::uint32_t offset = 0;
+    std::uint32_t size = 0;
+    std::memcpy(
+        &format, headerBytes.data() + layout::HeaderOffsets::kMetadataFormat, sizeof format);
+    std::memcpy(
+        &offset, headerBytes.data() + layout::HeaderOffsets::kMetadataOffset, sizeof offset);
+    std::memcpy(&size, headerBytes.data() + layout::HeaderOffsets::kMetadataSize, sizeof size);
+    if (format == layout::kBetaMetadataFormat || size == 0) {
+        return true;
+    }
+    if (format != layout::kMetadataFormat || size > layout::kMaximumMetadataBytes) {
+        return false;
+    }
+    try {
+        bytes.resize(size);
+    } catch (...) {
+        return false;
+    }
+    return read_at(path, offset, bytes) && report_references(bytes, visitor, context);
+}
+
+/**
+ * Calls one function once per installed package id, for its highest patch.
+ * @param directory Installed packages directory.
+ * @param visit Called with each package id. Returning false stops the walk and fails it.
+ * @return True when the whole directory was walked and every call worked.
+ */
+template <typename Visit>
+[[nodiscard]] bool walk_packages(std::wstring_view directory, Visit&& visit) noexcept {
+    Path search{};
+    if (!search_pattern(directory, search)) {
+        return false;
+    }
+    WIN32_FIND_DATAW found{};
+    const HANDLE enumeration = FindFirstFileW(search.chars.data(), &found);
+    if (enumeration == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+
+    // Patches of one package repeat its id, and only the highest is read.
+    SeenSet seen{};
+    bool complete = true;
+    do {
+        if ((found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+            continue;
+        }
+        std::uint16_t packageId = 0;
+        std::uint32_t patchIndex = 0;
+        if (!parse_leaf(found.cFileName, packageId, patchIndex) || !claim(seen, packageId)) {
+            continue;
+        }
+        if (!visit(packageId)) {
+            complete = false;
+            break;
+        }
+    } while (FindNextFileW(enumeration, &found) != 0);
+    if (complete && GetLastError() != ERROR_NO_MORE_FILES) {
+        complete = false;
+    }
+    return FindClose(enumeration) != FALSE && complete;
+}
+
 /** Adapts a tag-only visitor to the detailed entry callback. */
 struct LegacyVisitor {
     ClassVisitor visitor{};
@@ -157,37 +305,22 @@ bool scan_class_entries(std::wstring_view directory,
     if (directory.empty() || visitor == nullptr) {
         return false;
     }
-    Path search{};
-    if (!search_pattern(directory, search)) {
-        return false;
-    }
-    WIN32_FIND_DATAW found{};
-    const HANDLE enumeration = FindFirstFileW(search.chars.data(), &found);
-    if (enumeration == INVALID_HANDLE_VALUE) {
-        return false;
-    }
+    return walk_packages(directory, [&](std::uint16_t packageId) noexcept {
+        return scan_package(directory, packageId, classId, visitor, context, result);
+    });
+}
 
-    // Patches of one package repeat its id, and only the highest is scanned.
-    SeenSet seen{};
-    bool complete = true;
-    do {
-        if ((found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
-            continue;
-        }
-        std::uint16_t packageId = 0;
-        std::uint32_t patchIndex = 0;
-        if (!parse_leaf(found.cFileName, packageId, patchIndex) || !claim(seen, packageId)) {
-            continue;
-        }
-        if (!scan_package(directory, packageId, classId, visitor, context, result)) {
-            complete = false;
-            break;
-        }
-    } while (FindNextFileW(enumeration, &found) != 0);
-    if (complete && GetLastError() != ERROR_NO_MORE_FILES) {
-        complete = false;
+/** Reports every hash64 reference row of every installed package. */
+bool scan_references(std::wstring_view directory,
+                     ReferenceVisitor visitor,
+                     void* context) noexcept {
+    if (directory.empty() || visitor == nullptr) {
+        return false;
     }
-    return FindClose(enumeration) != FALSE && complete;
+    std::vector<std::byte> bytes{};
+    return walk_packages(directory, [&](std::uint16_t packageId) noexcept {
+        return read_package_references(directory, packageId, visitor, context, bytes);
+    });
 }
 
 } // namespace sunrise::middleware::content::packages::reader
