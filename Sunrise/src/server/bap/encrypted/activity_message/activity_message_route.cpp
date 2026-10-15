@@ -282,6 +282,7 @@ void report_release_refusal(const service::Request& request,
         // The burst encoder follows the body kind: a current private link carries its seed,
         // any target carries the joined table.
         plan.joinMembershipBody = plan.bindingIntent == BindingIntent::preserveCurrent
+                                          && binding.role == ActivityClientRole::privateCurrent
                                       ? JoinMembershipBody::privateSeed
                                       : JoinMembershipBody::publicSource;
         return true;
