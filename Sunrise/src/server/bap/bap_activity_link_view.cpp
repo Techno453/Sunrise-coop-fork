@@ -55,6 +55,16 @@ void fill_link_view(const Session& session, ActivityLinkView& output) noexcept {
     output.playerKey = encrypted::push::activity::published_player_key(session);
 }
 
+/** Copies one selected link's common-root inputs. */
+void copy_replication_view(const Session& session, ActivityReplicationView& output) noexcept {
+    output.binding = session.activity.session;
+    output.patchEpoch = session.activityPatchEpoch.value;
+    output.activityClientGeneration = session.activity.bindingGeneration;
+    output.groupSessionId = session.activity.groupSessionId;
+    output.memberId = session.activityMemberKey;
+    output.replicationEpoch = session.activity.replicationEpoch;
+}
+
 } // namespace
 
 /** Region index this connection's msg-5 builder selects. */
@@ -207,27 +217,7 @@ bool current_activity_link_view(std::int32_t localSliceSet,
     return selected != nullptr;
 }
 
-/** Reads one exact ActivityClient's common-root inputs. */
-bool activity_replication_view(const state::activity::SessionBinding& binding,
-                               ActivityReplicationView& output) noexcept {
-    output = {};
-    const std::shared_lock lock(session_lock());
-    std::size_t count = 0;
-    const Session* const session = unique_activity_link_locked(binding, count);
-    const bool ready =
-        session != nullptr && session->activityPatchEpoch.seen
-        && session->activityPatchEpoch.bindingGeneration == session->activity.bindingGeneration;
-    if (ready) {
-        output.binding = session->activity.session;
-        output.patchEpoch = session->activityPatchEpoch.value;
-        output.activityClientGeneration = session->activity.bindingGeneration;
-        output.groupSessionId = session->activity.groupSessionId;
-        output.memberId = session->activityMemberKey;
-        output.replicationEpoch = session->activity.replicationEpoch;
-    }
-    return ready;
-}
-
+/** Reads the unique ActivityClient whose activity session is the supplied view token. */
 bool activity_replication_view_for_session(std::uint64_t activitySessionId,
                                            ActivityReplicationView& output) noexcept {
     output = {};
@@ -251,12 +241,7 @@ bool activity_replication_view_for_session(std::uint64_t activitySessionId,
         ++count;
     }
     if (count == 1 && selected != nullptr) {
-        output.binding = selected->activity.session;
-        output.patchEpoch = selected->activityPatchEpoch.value;
-        output.activityClientGeneration = selected->activity.bindingGeneration;
-        output.groupSessionId = selected->activity.groupSessionId;
-        output.memberId = selected->activityMemberKey;
-        output.replicationEpoch = selected->activity.replicationEpoch;
+        copy_replication_view(*selected, output);
     }
     return count == 1;
 }
@@ -282,12 +267,7 @@ bool activity_replication_view_for_group(std::uint64_t groupSessionId,
         ++count;
     }
     if (count == 1 && selected != nullptr) {
-        output.binding = selected->activity.session;
-        output.patchEpoch = selected->activityPatchEpoch.value;
-        output.activityClientGeneration = selected->activity.bindingGeneration;
-        output.groupSessionId = selected->activity.groupSessionId;
-        output.memberId = selected->activityMemberKey;
-        output.replicationEpoch = selected->activity.replicationEpoch;
+        copy_replication_view(*selected, output);
     }
     return count == 1;
 }
@@ -323,12 +303,7 @@ bool owned_replication_view(std::uint64_t id,
     if (selected == nullptr) {
         return false;
     }
-    output.binding = selected->activity.session;
-    output.patchEpoch = selected->activityPatchEpoch.value;
-    output.activityClientGeneration = selected->activity.bindingGeneration;
-    output.groupSessionId = selected->activity.groupSessionId;
-    output.memberId = selected->activityMemberKey;
-    output.replicationEpoch = selected->activity.replicationEpoch;
+    copy_replication_view(*selected, output);
     return true;
 }
 } // namespace

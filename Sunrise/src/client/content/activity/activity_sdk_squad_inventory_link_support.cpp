@@ -10,6 +10,7 @@
 
 #include "../../../middleware/content/packages/tables/authored_squad_reader.h"
 #include "../../../middleware/content/packages/tables/scenario_reader.h"
+#include "../../../state/activity_sdk/squad_profiles.h"
 #include "activity_sdk_squad_inventory_internal.h"
 
 namespace sunrise::client::content::activity::sdk_generation::squad_inventory::detail {
@@ -18,32 +19,18 @@ namespace {
 namespace tables = middleware::content::packages::tables;
 namespace topology = topology_inventory;
 
-/** @return True when one topology text owns exactly its declared bytes. */
-[[nodiscard]] bool text_view(const topology::Text& text, std::string_view& output) noexcept {
-    output = {};
-    if (text.length >= text.value.size()) {
-        return false;
-    }
-    output = std::string_view(text.value.data(), text.length);
-    return text.value[text.length] == '\0';
-}
+} // namespace
 
-/** Formats one bounded identity string. */
-template <typename... Values>
-[[nodiscard]] bool format_text(std::string& output, const char* pattern, Values... values) {
-    std::array<char, 192> bytes{};
-    const int count = std::snprintf(bytes.data(), bytes.size(), pattern, values...);
-    if (count < 0 || static_cast<std::size_t>(count) >= bytes.size()) {
-        return false;
-    }
-    output.assign(bytes.data(), static_cast<std::size_t>(count));
-    return true;
-}
-
-/** Derives one descriptor identity from its exact object and slot tuple. */
-[[nodiscard]] bool descriptor_id(const topology::Snapshot& topology,
-                                 const DescriptorFact& descriptor,
-                                 std::string& output) {
+/**
+ * Derives one descriptor identity from its exact object and slot tuple.
+ * @param topology Topology the descriptor indexes.
+ * @param descriptor Descriptor to name.
+ * @param output Receives the identity.
+ * @return False when the descriptor does not name a matching object and slot.
+ */
+bool descriptor_id(const topology::Snapshot& topology,
+                   const DescriptorFact& descriptor,
+                   std::string& output) {
     if (descriptor.objectIndex >= topology.objects.size()
         || descriptor.slotIndex >= topology.slots.size()) {
         return false;
@@ -61,8 +48,6 @@ template <typename... Values>
                        static_cast<unsigned>(slot.slotIndex),
                        static_cast<unsigned>(slot.slotType));
 }
-
-} // namespace
 
 /** Checks the topology rows needed by the squad inventory. */
 [[nodiscard]] bool valid_topology(const topology::Snapshot& source) noexcept {
@@ -377,6 +362,34 @@ template <typename... Values>
     if (noNull) {
         output.flags |= format::kSquadMemberNoNullCandidates;
     }
+    ResolvedActor onlyActor{};
+    std::array<std::int8_t, 4> commonProfile{};
+    bool profileExact = allActorsEligible && actorResolver != nullptr;
+    bool firstProfile = true;
+    for (const auto tag : actorTags) {
+        ResolvedActor resolved{};
+        if (actorResolver == nullptr || !actorResolver(actorContext, tag, resolved)
+            || resolved.actorClassIndex == format::kAbsentIndex) {
+            profileExact = false;
+            continue;
+        }
+        if (actorTags.size() == 1) {
+            onlyActor = resolved;
+        }
+        if (!state::activity_sdk::valid_spawn_profile(resolved.authoredSpawnProfile)) {
+            profileExact = false;
+            continue;
+        }
+        if (!firstProfile && commonProfile != resolved.authoredSpawnProfile) {
+            profileExact = false;
+        }
+        commonProfile = resolved.authoredSpawnProfile;
+        firstProfile = false;
+    }
+    if (profileExact && !firstProfile) {
+        output.authoredSpawnProfile = commonProfile;
+        output.flags |= format::kSquadMemberSpawnProfileExact;
+    }
     if (allActorsEligible && actorTags.size() == 1) {
         output.actorDefinitionTag = *actorTags.begin();
         if (!format_text(output.actorDefinitionId,
@@ -384,11 +397,8 @@ template <typename... Values>
                          static_cast<unsigned>(output.actorDefinitionTag))) {
             return false;
         }
-        std::uint32_t actorIndex = format::kAbsentIndex;
-        if (actorResolver != nullptr
-            && actorResolver(actorContext, output.actorDefinitionTag, actorIndex)
-            && actorIndex != format::kAbsentIndex) {
-            output.actorClassIndex = actorIndex;
+        if (onlyActor.actorClassIndex != format::kAbsentIndex) {
+            output.actorClassIndex = onlyActor.actorClassIndex;
             output.actorLink = ActorLink::exactReciprocal;
             output.flags |= format::kSquadMemberActorClassExact;
         } else {

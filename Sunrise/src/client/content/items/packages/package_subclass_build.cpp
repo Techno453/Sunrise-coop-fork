@@ -124,6 +124,8 @@ bool build_character_abilities(
                              std::uint16_t socketEntryListIndex,
                              const domain::Selection& selection) noexcept {
         if (count >= output.size()) {
+            // A dropped row leaves that subclass and selection with no published abilities.
+            report_ability_failure("capacity", character, socketEntryListIndex, output.size());
             return;
         }
         domain::Definition row{};
@@ -170,8 +172,7 @@ bool build_character_abilities(
         }
         output[count++] = row;
     };
-    for (std::size_t character = 0; character < account.characterCount && count < output.size();
-         ++character) {
+    for (std::size_t character = 0; character < account.characterCount; ++character) {
         std::uint16_t equippedSocketEntryListIndex = 0;
         const char* subclassReason = "subclass";
         if (!subclass_list(

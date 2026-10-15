@@ -31,6 +31,21 @@ struct Storage {
     std::size_t definitionCount{};
     std::size_t saleRowCount{};
     std::size_t installedRowCount{};
+    /** Sale rows whose price depends on an expression, kept but never charged. */
+    std::size_t conditionalRows{};
+    /** Sale rows whose cost array did not read, kept but never charged. */
+    std::size_t unreadableRows{};
+
+    /** Only published prefixes are visible; extraction fully assigns each new row. */
+    void reset() noexcept {
+        blob.clear();
+        indexCount = 0;
+        definitionCount = 0;
+        saleRowCount = 0;
+        installedRowCount = 0;
+        conditionalRows = 0;
+        unreadableRows = 0;
+    }
 };
 
 /** One array a definition or a sale row declares, reduced to what the catalog stores. */
@@ -89,27 +104,49 @@ read(std::span<const std::byte> blob, std::size_t offset, Value& value) noexcept
 }
 
 /**
- * Reads what one sale row charges, from the first row of its price-override array.
- * A row charging nothing declares no override, which is data rather than a malformed row.
+ * Reads one sale row's cost entries and whether they are its price.
+ * An entry is static only with both expression arrays empty and the plain trailing word. Any other
+ * entry makes the row conditional: its entries are kept and the row is never charged.
  * @param blob Whole definition blob.
  * @param at Sale row offset inside the blob.
- * @param value Receives the cost item and quantity, or the absent cost.
- * @return True when the array is absent, or resolves and ends inside the blob.
+ * @param value Receives the entries and the row's price state.
+ * @return True when the array is absent, or resolves, fits, and ends inside the blob. Otherwise
+ *         the row is left unreadable, with no entries.
  */
 [[nodiscard]] bool
 read_sale_cost(std::span<const std::byte> blob, std::size_t at, domain::SaleRow& value) noexcept {
-    value.costItemIndex = domain::kAbsentCostItem;
-    value.costQuantity = 0;
+    value.costs = {};
+    value.costCount = 0;
+    value.priceState = domain::PriceState::unreadable;
     ArrayView cost{};
     if (!read_array(blob, at + kSaleCostArrayDescriptor, domain::kSaleCostRowStride, cost)) {
         return false;
     }
-    if (cost.count == 0) {
-        return true;
+    if (cost.count != 0
+        && (cost.classId != domain::kSaleCostRowClass || cost.count > value.costs.size())) {
+        return false;
     }
-    return cost.classId == domain::kSaleCostRowClass
-           && read(blob, cost.base + kSaleCostItemIndexOffset, value.costItemIndex)
-           && read(blob, cost.base + kSaleCostQuantityOffset, value.costQuantity);
+    bool conditional = false;
+    for (std::size_t entry = 0; entry < cost.count; ++entry) {
+        const std::size_t entryAt = cost.base + (entry * domain::kSaleCostRowStride);
+        domain::SaleCost& output = value.costs[entry];
+        std::uint64_t firstProgram = 0;
+        std::uint64_t secondProgram = 0;
+        std::uint32_t word = 0;
+        if (!read(blob, entryAt + kSaleCostItemIndexOffset, output.itemIndex)
+            || !read(blob, entryAt + kSaleCostQuantityOffset, output.quantity)
+            || !read(blob, entryAt + kSaleCostFirstProgramDescriptor, firstProgram)
+            || !read(blob, entryAt + kSaleCostSecondProgramDescriptor, secondProgram)
+            || !read(blob, entryAt + kSaleCostWordOffset, word)) {
+            value.costs = {};
+            return false;
+        }
+        conditional = conditional || firstProgram != 0 || secondProgram != 0
+                      || word != domain::kPlainCostWord;
+    }
+    value.costCount = static_cast<std::uint8_t>(cost.count);
+    value.priceState = conditional ? domain::PriceState::conditional : domain::PriceState::plain;
+    return true;
 }
 
 /**
@@ -146,6 +183,8 @@ read_index(const reader::Source& source, reader::Scratch& scratch, Storage& stor
 
 /**
  * Reads every sale row of one definition into the flat bank.
+ * A row whose cost array does not read costs that row its price, never the vendor: a purchase
+ * names the row by ordinal, so the row stays in place and refuses to be bought.
  * @param blob Whole definition blob.
  * @param definition Definition whose sale array was already resolved.
  * @param storage Pass storage receiving the rows.
@@ -163,9 +202,19 @@ read_index(const reader::Source& source, reader::Scratch& scratch, Storage& stor
         value = {};
         if (!read(blob, at + kSaleItemIndexOffset, value.itemIndex)
             || !read(blob, at + kSaleSecondaryItemOffset, value.secondaryItemIndex)
-            || !read(blob, at + kSaleCategoryIndexOffset, value.categoryIndex)
-            || !read_sale_cost(blob, at, value)) {
+            || !read(blob, at + kSaleCategoryIndexOffset, value.categoryIndex)) {
             return false;
+        }
+        if (!read_sale_cost(blob, at, value)) {
+            ++storage.unreadableRows;
+            core::log::writef(core::log::Channel::state,
+                              core::log::Level::warn,
+                              "ev=build_data stage=vendors result=unreadable_cost hash=0x%08X "
+                              "row=%zu",
+                              definition.definitionHash,
+                              row);
+        } else if (value.priceState == domain::PriceState::conditional) {
+            ++storage.conditionalRows;
         }
     }
     storage.saleRowCount += definition.saleCount;
@@ -271,17 +320,20 @@ void report(const Storage& storage, std::size_t skipped, const char* result) noe
     const int written = std::snprintf(line.data(),
                                       line.size(),
                                       "ev=build_data stage=vendors index=%zu definitions=%zu "
-                                      "sale=%zu installed=%zu skipped=%zu result=%s",
+                                      "sale=%zu conditional=%zu unreadable=%zu installed=%zu "
+                                      "skipped=%zu result=%s",
                                       storage.indexCount,
                                       storage.definitionCount,
                                       storage.saleRowCount,
+                                      storage.conditionalRows,
+                                      storage.unreadableRows,
                                       storage.installedRowCount,
                                       skipped,
                                       result);
     if (written > 0) {
+        const bool clean = storage.indexCount != 0 && skipped == 0 && storage.unreadableRows == 0;
         core::log::write(core::log::Channel::state,
-                         storage.indexCount != 0 && skipped == 0 ? core::log::Level::info
-                                                                 : core::log::Level::warn,
+                         clean ? core::log::Level::info : core::log::Level::warn,
                          {line.data(), static_cast<std::size_t>(written)});
     }
 }
@@ -294,7 +346,7 @@ bool build(const reader::Source& source, reader::Scratch& scratch) noexcept {
         return true;
     }
     static Storage storage{};
-    storage = {};
+    storage.reset();
     if (!read_index(source, scratch, storage)) {
         report(storage, 0, "index");
         return false;

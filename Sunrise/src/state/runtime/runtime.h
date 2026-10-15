@@ -3,12 +3,14 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <variant>
 
 #include "../account/account_context.h"
 #include "../build_data/items/quest_initialization.h"
 #include "../build_data/records/definition.h"
+#include "../build_data/vendors/definition.h"
 #include "state.h"
 
 namespace sunrise::state::account::settings {
@@ -54,7 +56,6 @@ struct PendingSubclassSelection {
     std::uint64_t accountSoid{};
     std::uint64_t characterSoid{};
     std::uint64_t subclassInstanceSoid{};
-    std::uint32_t subclassDefinitionHash{};
     std::size_t characterIndex{};
     std::uint16_t subclassDefinitionIndex{};
     std::uint16_t socketEntryListIndex{};
@@ -105,7 +106,6 @@ struct PendingEquipmentSwap {
     std::size_t characterIndex{};
     std::size_t equipmentSlotIndex{};
     std::size_t inventoryIndex{};
-    std::size_t movedItemCount{};
     std::uint8_t nativeEquipmentSlot{};
     EquipmentMutationKind kind{};
     bool prepared{};
@@ -521,14 +521,18 @@ set_selected_title(std::uint16_t recordIndex, std::uint64_t& characterSoid, bool
  * Native-default sockets, a unique runtime SOID, and the selected character's current item level
  * are used. Full loadout resolution is the authoritative bucket-capacity check.
  *
- * @param collectibleIndex Collections row the Client pulled from.
+ * @param collectibleIndex Collections row that owns the item, or kNoCollectibleIndex.
  * @param definitionHash Installed item definition requested by the Client.
+ * @param price A vendor sale row's cost entries, spent in place of the collectible's material
+ *        set; absent for a Collections pull, which pays with the collectible's materials.
  * @param mutation Gets a checked after-image without changing account State.
  * @return True when the item and every existing loadout row resolve with one free native row.
  */
-[[nodiscard]] bool prepare_item_acquisition(std::uint16_t collectibleIndex,
-                                            std::uint32_t definitionHash,
-                                            PendingItemAcquisition& mutation) noexcept;
+[[nodiscard]] bool
+prepare_item_acquisition(std::uint16_t collectibleIndex,
+                         std::uint32_t definitionHash,
+                         std::optional<std::span<const build_data::vendors::SaleCost>> price,
+                         PendingItemAcquisition& mutation) noexcept;
 
 /** Prepares a direct character-item grant without a Collections charge. */
 [[nodiscard]] bool prepare_item_acquisition_for_item(std::uint16_t itemDefinitionIndex,
@@ -592,15 +596,18 @@ reserve_selected_character_inventory_serial(std::int32_t& mutationSerial) noexce
  * An existing non-full stack is incremented. Otherwise a new dense State entry is appended only
  * when the installed profile bucket still owns a free native row.
  *
- * @param collectibleIndex Collections row the Client pulled from.
+ * @param collectibleIndex Collections row that owns the item, or kNoCollectibleIndex.
  * @param definitionHash Installed stackable definition requested by the Client.
+ * @param price A vendor sale row's cost entries, spent in place of the collectible's material
+ *        set; absent for a Collections pull, which pays with the collectible's materials.
  * @param mutation Gets the checked profile before/after images without changing account State.
  * @return True when the definition belongs to the main profile array and one unit fits.
  */
-[[nodiscard]] bool
-prepare_profile_item_acquisition(std::uint16_t collectibleIndex,
-                                 std::uint32_t definitionHash,
-                                 PendingProfileItemAcquisition& mutation) noexcept;
+[[nodiscard]] bool prepare_profile_item_acquisition(
+    std::uint16_t collectibleIndex,
+    std::uint32_t definitionHash,
+    std::optional<std::span<const build_data::vendors::SaleCost>> price,
+    PendingProfileItemAcquisition& mutation) noexcept;
 
 /** Prepares a direct profile-stack grant without a Collections charge. */
 [[nodiscard]] bool
@@ -668,19 +675,17 @@ commit_profile_item_acquisition(PendingProfileItemAcquisition& mutation) noexcep
                                        PendingSocketPlug& mutation) noexcept;
 
 /**
- * Prepares one ordinary-socket selection for an exact character-screen item selector.
- * The resolved instance runs through the same checked transition as an instance-addressed action,
- * so acquired and unequipped items do not depend on a coincidental menu-row ordinal.
- * @param instanceIdentityToken Item-instance identity decoded from the opcode-1901 selector.
+ * Prepares one ordinary-socket selection for the item instance opcode 1901 names.
+ * @param targetInstanceSoid Whole item-instance identity carried by opcode 1901.
  * @param requestedSocketLane Native socket action lane; compatibility resolves the physical lane.
  * @param plugDefinitionIndex Installed plug-definition row selected by the Client.
  * @param mutation Gets the checked before/after images without changing account State.
  * @return True when one item matches, the plug resolves to that lane, and the transition is valid.
  */
-[[nodiscard]] bool prepare_character_selector_socket_plug(std::uint64_t instanceIdentityToken,
-                                                          std::uint8_t requestedSocketLane,
-                                                          std::uint16_t plugDefinitionIndex,
-                                                          PendingSocketPlug& mutation) noexcept;
+[[nodiscard]] bool prepare_equipped_socket_plug(std::uint64_t targetInstanceSoid,
+                                                std::uint8_t requestedSocketLane,
+                                                std::uint16_t plugDefinitionIndex,
+                                                PendingSocketPlug& mutation) noexcept;
 
 /** Produces the complete uncommitted account after-image for a prepared socket transaction. */
 [[nodiscard]] bool preview_socket_plug(const PendingSocketPlug& mutation,

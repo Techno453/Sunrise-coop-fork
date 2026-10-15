@@ -7,9 +7,7 @@
 namespace sunrise::client::content::activity::sdk_generation::pack_composer::detail {
 
 /** Checks the retained activity and panel tables at the public composition boundary. */
-bool validate_storage(const Inputs&,
-                      const PreparedRanges& prepared,
-                      const Storage& value) noexcept {
+bool validate_storage(const PreparedRanges& prepared, const Storage& value) noexcept {
     const std::array<std::size_t, format::kSectionCount> counts{
         value.strings.size(),
         value.activities.size(),
@@ -61,6 +59,7 @@ bool validate_storage(const Inputs&,
         value.combatObjectiveGroups.size(),
         value.actorAbilities.size(),
         value.actorAbilityTargets.size(),
+        value.authoredSceneEventKeys.size(),
     };
     const bool bounded = std::all_of(counts.begin(), counts.end(), [](std::size_t count) {
         return count <= (std::numeric_limits<std::uint32_t>::max)();

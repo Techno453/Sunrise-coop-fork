@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <limits>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -12,18 +13,13 @@
 #include <vector>
 
 #include "../../../middleware/bap/activity_message/auth_schema_catalog.h"
+#include "../../../state/activity_sdk/scene_triggers.h"
 #include "activity_sdk_lua_missions_internal.h"
 
 namespace sunrise::client::content::activity::sdk_generation::lua_artifacts::internal {
 namespace {
 
 namespace auth_catalog = middleware::bap::activity_message::auth_schema_catalog;
-
-void append_int(std::string& output, std::int32_t value) {
-    std::array<char, 16> buffer{};
-    const int length = std::snprintf(buffer.data(), buffer.size(), "%d", value);
-    output.append(buffer.data(), static_cast<std::size_t>(length));
-}
 
 void append_float(std::string& output, std::uint32_t bits) {
     std::array<char, 32> buffer{};
@@ -223,6 +219,9 @@ bool render_mission(const Source& source,
         append_uint(output, slot.senseSchema);
         output.append(", auth_schema = ");
         append_uint(output, slot.authSchema);
+        if ((slot.flags & format::kSlotAuthoredSceneUnresourced) != 0) {
+            output.append(", unresourced = true");
+        }
         if (auth != nullptr) {
             output.append(", auth_type = ");
             append_string(output, auth->name);
@@ -335,6 +334,8 @@ bool render_mission(const Source& source,
     output.append("    },\n    scenes = {\n");
     std::unordered_set<std::string> sceneKeys;
     std::string sceneConstants = "mission.Scene = {\n";
+    std::string sceneInputConstants = "mission.SceneInput = {\n";
+    std::string sceneOutputConstants = "mission.SceneOutput = {\n";
     if (!range_inside(scenario.occurrences, source.occurrences.size())) {
         return false;
     }
@@ -391,6 +392,20 @@ bool render_mission(const Source& source,
             append_hex(output, scene.configTag);
             output.append(", resource_tag = ");
             append_hex(output, scene.resourceTag);
+            // The graph's gates in order; a script fires one with scene:send_event.
+            const auto gates =
+                state::activity_sdk::scene_gates(source.authoredSceneEventKeys, slotRow);
+            if (!gates.empty()) {
+                output.append(", event_keys = { ");
+                for (std::size_t gate = 0; gate < gates.size(); ++gate) {
+                    if (gate != 0) {
+                        output.append(", ");
+                    }
+                    append_hex(output, gates[gate].key);
+                }
+                output.append(" }");
+                append_scene_ports(key, gates, sceneInputConstants, sceneOutputConstants);
+            }
             output.append(" },\n");
             sceneConstants.append("    ");
             sceneConstants.append(key);
@@ -437,6 +452,8 @@ bool render_mission(const Source& source,
     slotConstants.append("}\n");
     squadConstants.append("}\n");
     sceneConstants.append("}\n");
+    sceneInputConstants.append("}\n");
+    sceneOutputConstants.append("}\n");
     taskConstants.append("}\n");
     std::string taskGroupConstants = "mission.TaskGroup = {\n";
     for (const std::uint32_t slot : slots) {
@@ -580,12 +597,20 @@ bool render_mission(const Source& source,
         }
         for (const std::uint32_t rowIndex : found->second) {
             const format::DirectiveElement& row = source.directiveElements[rowIndex];
-            (void)append_unique_key(
-                directiveConstants, directiveKeys, text(source, row.title), row.nameHash);
+            const std::string_view progress = text(source, row.progress);
+            // A row with no description is keyed by its progress label; others keep the title key.
+            const bool labelKey = !progress.empty() && text(source, row.description).empty();
+            (void)append_unique_key(directiveConstants,
+                                    directiveKeys,
+                                    labelKey ? progress : text(source, row.title),
+                                    row.nameHash);
             directiveConstants.append("{ id = ");
             append_string(directiveConstants, text(source, row.id));
             directiveConstants.append(", slot_row = ");
             append_uint(directiveConstants, row.slotIndex);
+            // The sensor's mission.Slot value, so a script compares it without a row lookup.
+            directiveConstants.append(", sensor = ");
+            append_string(directiveConstants, text(source, source.slots[slot].id));
             directiveConstants.append(", name_hash = ");
             append_hex(directiveConstants, row.nameHash);
             directiveConstants.append(", element = ");
@@ -594,6 +619,13 @@ bool render_mission(const Source& source,
             append_string(directiveConstants, text(source, row.title));
             directiveConstants.append(", description = ");
             append_string(directiveConstants, text(source, row.description));
+            if (!progress.empty()) {
+                directiveConstants.append(", progress = ");
+                append_string(directiveConstants, progress);
+            }
+            if ((row.flags & format::kDirectiveElementCounter) != 0) {
+                directiveConstants.append(", counter = true");
+            }
             directiveConstants.append(" },\n");
         }
     }
@@ -670,126 +702,14 @@ bool render_mission(const Source& source,
         authSlotConstants.append("    },\n");
     }
     authSlotConstants.append("}\n");
-    std::string actorMessageConstants = "mission.ActorMessage = {\n";
-    for (const format::ActorMessageSchema& row : source.actorMessageSchemas) {
-        actorMessageConstants.append("    ");
-        actorMessageConstants.append(identifier(text(source, row.name), true));
-        actorMessageConstants.append(" = { definition = ");
-        append_hex(actorMessageConstants, row.definitionHandle);
-        actorMessageConstants.append(", durable_key = ");
-        append_hex(actorMessageConstants, row.durableKey);
-        actorMessageConstants.append(", owner_class = ");
-        append_hex(actorMessageConstants, row.ownerClass);
-        actorMessageConstants.append(", handler_slot = ");
-        append_uint(actorMessageConstants, row.handlerSlot);
-        actorMessageConstants.append(", body_type = ");
-        append_uint(actorMessageConstants, row.bodyType);
-        actorMessageConstants.append(" },\n");
-    }
-    actorMessageConstants.append("}\n");
-    std::string actorCommandConstants = "mission.ActorCommand = {\n";
-    std::string actorCommandDefinitions = "mission.ActorCommandDefinition = {\n";
-    std::string factionConstants = "mission.Faction = {\n";
-    bool factionValuesWritten = false;
-    for (const format::ActorCommandDefinition& row : source.actorCommandDefinitions) {
-        const std::string commandName = identifier(text(source, row.name), true);
-        actorCommandConstants.append("    ");
-        actorCommandConstants.append(commandName);
-        actorCommandConstants.append(" = ");
-        append_uint(actorCommandConstants, row.selector);
-        actorCommandConstants.append(",\n");
-        actorCommandDefinitions.append("    ");
-        actorCommandDefinitions.append(commandName);
-        actorCommandDefinitions.append(" = { selector = mission.ActorCommand.");
-        actorCommandDefinitions.append(commandName);
-        actorCommandDefinitions.append(", payload = ");
-        append_hex(actorCommandDefinitions, row.payloadHandle);
-        actorCommandDefinitions.append(" },\n");
-        if (row.effect == format::ActorCommandEffect::setFaction && !factionValuesWritten) {
-            factionConstants.append("    ");
-            factionConstants.append(identifier(text(source, row.factionNoneName), true));
-            factionConstants.append(" = ");
-            append_int(factionConstants, row.factionNone);
-            factionConstants.append(",\n    ");
-            factionConstants.append(identifier(text(source, row.factionRemovedName), true));
-            factionConstants.append(" = ");
-            append_int(factionConstants, row.factionRemoved);
-            factionConstants.append(",\n    ");
-            factionConstants.append(identifier(text(source, row.factionHostileToAllName), true));
-            factionConstants.append(" = ");
-            append_int(factionConstants, row.factionHostileToAll);
-            factionConstants.append(",\n");
-            factionValuesWritten = true;
-        }
-    }
-    actorCommandConstants.append("}\n");
-    actorCommandDefinitions.append("}\n");
-    factionConstants.append("}\n");
-    std::string simulationEventConstants = "mission.SimulationEvent = {\n";
-    std::string simulationEventDefinitions = "mission.SimulationEventDefinition = {\n";
-    for (const format::SimulationEventDefinition& row : source.simulationEventDefinitions) {
-        const std::string eventName = identifier(text(source, row.name), true);
-        simulationEventConstants.append("    ");
-        simulationEventConstants.append(eventName);
-        simulationEventConstants.append(" = ");
-        append_uint(simulationEventConstants, row.eventType);
-        simulationEventConstants.append(",\n");
-        simulationEventDefinitions.append("    ");
-        simulationEventDefinitions.append(eventName);
-        simulationEventDefinitions.append(" = { event_type = mission.SimulationEvent.");
-        simulationEventDefinitions.append(eventName);
-        simulationEventDefinitions.append(", primary_schema = ");
-        if (row.primarySchema == format::kAbsentIndex) {
-            simulationEventDefinitions.append("nil");
-        } else {
-            append_hex(simulationEventDefinitions, row.primarySchema);
-        }
-        simulationEventDefinitions.append(", secondary_schema = ");
-        if (row.secondarySchema == format::kAbsentIndex) {
-            simulationEventDefinitions.append("nil");
-        } else {
-            append_hex(simulationEventDefinitions, row.secondarySchema);
-        }
-        simulationEventDefinitions.append(" },\n");
-    }
-    simulationEventConstants.append("}\n");
-    simulationEventDefinitions.append("}\n");
-    std::string runtimeFieldTypes = "mission.RuntimeFieldType = {\n";
-    // Lua name published for each runtime codec family.
-    constexpr std::array<std::pair<format::RuntimeCodecFamily, std::string_view>, 3> kFamilies{{
-        {format::RuntimeCodecFamily::activity, "ACTIVITY"},
-        {format::RuntimeCodecFamily::sobjectModeZero, "SOBJECT_MODE_ZERO"},
-        {format::RuntimeCodecFamily::sobjectModeOne, "SOBJECT_MODE_ONE"},
-    }};
-    for (const auto& [family, familyName] : kFamilies) {
-        runtimeFieldTypes.append("    ");
-        runtimeFieldTypes.append(familyName);
-        runtimeFieldTypes.append(" = {\n");
-        for (const format::RuntimeTypeDefinition& row : source.runtimeTypeDefinitions) {
-            if ((row.codecFamilies & static_cast<std::uint32_t>(family)) == 0) {
-                continue;
-            }
-            runtimeFieldTypes.append("        ");
-            runtimeFieldTypes.append(identifier(text(source, row.name), true));
-            runtimeFieldTypes.append(" = ");
-            append_uint(runtimeFieldTypes, row.typeCode);
-            runtimeFieldTypes.append(",\n");
-        }
-        runtimeFieldTypes.append("    },\n");
-    }
-    runtimeFieldTypes.append("}\n");
     output.append(stateConstants);
     output.append(slotConstants);
     output.append(authSlotConstants);
-    output.append(actorMessageConstants);
-    output.append(actorCommandConstants);
-    output.append(actorCommandDefinitions);
-    output.append(factionConstants);
-    output.append(simulationEventConstants);
-    output.append(simulationEventDefinitions);
-    output.append(runtimeFieldTypes);
+    append_catalog_constants(source, output);
     output.append(squadConstants);
     output.append(sceneConstants);
+    output.append(sceneInputConstants);
+    output.append(sceneOutputConstants);
     output.append(taskConstants);
     output.append(taskGroupConstants);
     output.append(abilityConstants);

@@ -25,7 +25,7 @@ struct ConnectionFields {
     bool retainsPatchEpoch{};
     /** Set when this transaction commits one client-authored type-23 identity. */
     bool receivesClientIdentity{};
-    /** Set by a join alone, which re-arms the roster warm-up the new container needs. */
+    /** Set by a join alone; publication then resets the connection's roster state. */
     bool joinsActivity{};
     /** Shared native joins commit their exact BC identity atomically with the owned lease. */
     bool sharedJoin{};
@@ -67,7 +67,7 @@ void discard_staged_advertisement(Session& session) noexcept;
 void release_activity_connection(Session& session) noexcept;
 
 /**
- * Arms the owed Family-4 and banner re-pushes when the queuez publication asks for them.
+ * Arms the owed ability refresh and Family-4 and family-two re-pushes the publication names.
  * @param session Connection-owned re-push timers.
  * @param queuezPublication Staged queuez publication.
  */

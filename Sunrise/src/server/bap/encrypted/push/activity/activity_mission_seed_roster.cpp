@@ -394,12 +394,40 @@ MissionSeedRosterResult append_initial_mission_seed(Session& session,
     const state::activity::membership::ClientPlacement placement =
         client_placement(session, refresh);
     const std::int32_t heldRegion = state::activity::membership::instantiated_region(placement);
+    // The public link keeps its own bubble loaded and never instantiates the selected region,
+    // so the window also closes on the link that reports one.
+    const std::int32_t liveRegion = state::activity::membership::instantiated_region(
+        state::activity::membership::reported_placement(
+            state::activity::membership::live_region_session(state::activity::kAbsentSessionId)));
     // The window closes on the exact packed region, so a sibling state of one bubble counts.
+    // Only this link's own arrival may close it: a sibling link's region is not this client's
+    // world, and closing early publishes the full set before the client can accept it.
     if (!adopting && lease.regionArrivalPending
         && mission_seed_arrival_window_closed(heldRegion, lease.plan.effectiveRegion)) {
         lease.regionArrivalPending = false;
     }
     const bool arrivalWindow = !adopting && lease.regionArrivalPending;
+    if (arrivalWindow) {
+        // Publication holds the previous plan until the client instantiates the selected region.
+        // Name both regions, because a wait that never ends looks the same as a slow one.
+        std::array<char, 192> wait{};
+        const int waitWritten = std::snprintf(
+            wait.data(),
+            wait.size(),
+            "ev=activity stage=mission_seed_arrival held=%d live=%d selected=%u previous=%u "
+            "rev=%llu/%llu",
+            heldRegion,
+            liveRegion,
+            lease.plan.effectiveRegion,
+            lease.previousPlan.effectiveRegion,
+            static_cast<unsigned long long>(lease.revision),
+            static_cast<unsigned long long>(lease.publishedRevision));
+        if (waitWritten > 0) {
+            core::log::write(core::log::Channel::server,
+                             core::log::Level::debug,
+                             {wait.data(), static_cast<std::size_t>(waitWritten)});
+        }
+    }
     const ActivityMissionSeedPlan& activePlan = arrivalWindow ? lease.previousPlan : lease.plan;
     const std::uint32_t selectedRegion =
         lease.configured ? activePlan.effectiveRegion : effectiveRegion;
@@ -412,6 +440,26 @@ MissionSeedRosterResult append_initial_mission_seed(Session& session,
         selectedRegion / middleware::content::packages::tables::kSliceSetIndexFactor;
     if (selectedBubble >= layouts::kBubbleCapacity
         || ((hostedBubbles >> selectedBubble) & 1U) == 0) {
+        // A selection this link cannot host leaves the lease unpublished with no refusal, so
+        // name the bubble and the link's hosted set.
+        if (lease.configured && lease.revision != lease.publishedRevision) {
+            std::array<char, 192> unhosted{};
+            const int unhostedWritten =
+                std::snprintf(unhosted.data(),
+                              unhosted.size(),
+                              "ev=activity stage=mission_seed_unhosted bubble=%u hosted=0x%016llX"
+                              " region=%u rev=%llu/%llu",
+                              selectedBubble,
+                              static_cast<unsigned long long>(hostedBubbles),
+                              selectedRegion,
+                              static_cast<unsigned long long>(lease.revision),
+                              static_cast<unsigned long long>(lease.publishedRevision));
+            if (unhostedWritten > 0) {
+                core::log::write(core::log::Channel::server,
+                                 core::log::Level::debug,
+                                 {unhosted.data(), static_cast<std::size_t>(unhostedWritten)});
+            }
+        }
         return MissionSeedRosterResult::inactive;
     }
     const std::size_t available = scratch.rosterGroups.size() - canonicalGroupCount;

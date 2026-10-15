@@ -9,6 +9,7 @@
 #include <string>
 #include <string_view>
 
+#include "../../../state/gameplay/external/rsat_decode_plans.h"
 #include "activity_sdk_tree_publication.h"
 
 namespace sunrise::client::content::activity::sdk_generation::live_publication {
@@ -21,8 +22,13 @@ constexpr std::wstring_view kPendingMarkerSuffix = L"\\.activity-sdk-publication
 constexpr std::wstring_view kCommittedMarkerSuffix = L"\\.activity-sdk-publication.committed";
 /** Distinct stage directories tried before giving up on a name collision. */
 constexpr std::size_t kAllocationAttempts = 16;
-/** Marker file magic, bytes "ASP1"; a file without it is not ours. */
-constexpr std::uint32_t kMarkerMagic = 0x31505341U;
+/** ASP1 journals cover Lua, pack, and catalog only. */
+constexpr std::uint32_t kLegacyMarkerMagic = 0x31505341U;
+/** ASP2 journals include the decoder pair before the catalog. */
+constexpr std::uint32_t kMarkerMagic = 0x32505341U;
+namespace plans = state::gameplay::rsat_decode_plans;
+/** A drive path opens with the drive letter, a colon and a separator. */
+constexpr std::size_t kDrivePrefixLength = 3;
 
 volatile LONG g_sequence{};
 
@@ -42,7 +48,7 @@ struct Marker final {
     std::array<std::uint8_t, 3> reserved{};
 };
 
-[[nodiscard]] bool ordinary_directory(const wchar_t* path) noexcept;
+[[nodiscard]] bool is_directory(const wchar_t* path) noexcept;
 
 /** Resolves one null-terminated lexical path into normalized absolute storage. */
 [[nodiscard]] bool full_path(const wchar_t* input, std::wstring& output) noexcept {
@@ -61,7 +67,8 @@ struct Marker final {
             return false;
         }
         pending.resize(written);
-        while (pending.size() > 3U && (pending.back() == L'\\' || pending.back() == L'/')) {
+        while (pending.size() > kDrivePrefixLength
+               && (pending.back() == L'\\' || pending.back() == L'/')) {
             pending.pop_back();
         }
         output = std::move(pending);
@@ -72,54 +79,33 @@ struct Marker final {
     }
 }
 
-/** Which drive-path component, if any, is not an ordinary directory. */
-enum class Ancestry : std::uint8_t {
-    ready,
-    pathShape,
-    driveRoot,
-    ancestor,
-};
-
-/** A drive path is at least a letter, a colon and a separator. */
-constexpr std::size_t kDrivePrefixLength = 3;
-
-/** Reports the first drive-path component which is not an ordinary directory. */
-[[nodiscard]] Ancestry ordinary_ancestry(const std::wstring& directory) noexcept {
+/** Requires every component of a drive path to be an existing directory. */
+[[nodiscard]] bool directory_ancestry(const std::wstring& directory) noexcept {
     if (directory.size() < kDrivePrefixLength || directory[1] != L':' || directory[2] != L'\\') {
-        return Ancestry::pathShape;
+        return false;
     }
-    const bool rootOrdinary = ordinary_directory(directory.substr(0, kDrivePrefixLength).c_str());
+    if (!is_directory(directory.substr(0, kDrivePrefixLength).c_str())) {
+        return false;
+    }
     std::size_t cursor = kDrivePrefixLength;
     while (cursor < directory.size()) {
         const std::size_t separator = directory.find(L'\\', cursor);
         const std::size_t end = separator == std::wstring::npos ? directory.size() : separator;
         const std::wstring prefix = directory.substr(0, end);
-        if (!ordinary_directory(prefix.c_str())) {
-            return Ancestry::ancestor;
+        if (!is_directory(prefix.c_str())) {
+            return false;
         }
         if (separator == std::wstring::npos) {
             break;
         }
         cursor = separator + 1U;
     }
-    return rootOrdinary ? Ancestry::ready : Ancestry::driveRoot;
+    return true;
 }
 
-/** Wine maps its synthetic drive root as a reparse point; real path components stay checked. */
-[[nodiscard]] bool ordinary_ancestry_allowed(Ancestry ancestry) noexcept {
-    if (ancestry == Ancestry::ready) {
-        return true;
-    }
-    if (ancestry != Ancestry::driveRoot) {
-        return false;
-    }
-    const HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
-    return ntdll != nullptr && GetProcAddress(ntdll, "wine_get_version") != nullptr;
-}
-
-/** Resolves one existing ordinary directory and rejects reparse points in every ancestor. */
+/** Resolves one path whose every component is an existing directory. */
 [[nodiscard]] bool canonical_directory(const wchar_t* input, std::wstring& output) noexcept {
-    return full_path(input, output) && ordinary_ancestry_allowed(ordinary_ancestry(output));
+    return full_path(input, output) && directory_ancestry(output);
 }
 
 /** Compares two complete Windows path components without locale-sensitive folding. */
@@ -162,8 +148,8 @@ split(std::wstring_view path, std::wstring_view& parent, std::wstring_view& leaf
     return MoveFileExW(source, target, MOVEFILE_WRITE_THROUGH) != FALSE;
 }
 
-/** Requires one ordinary directory and rejects a junction or symbolic-link leaf. */
-[[nodiscard]] bool ordinary_directory(const wchar_t* path) noexcept {
+/** Requires one existing directory. */
+[[nodiscard]] bool is_directory(const wchar_t* path) noexcept {
     if (path == nullptr || path[0] == L'\0') {
         return false;
     }
@@ -172,8 +158,8 @@ split(std::wstring_view path, std::wstring_view& parent, std::wstring_view& leaf
            && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0;
 }
 
-/** Requires one ordinary file and rejects a reparse-backed leaf. */
-[[nodiscard]] bool ordinary_file(const wchar_t* path) noexcept {
+/** Requires one existing file that is not a directory. */
+[[nodiscard]] bool is_file(const wchar_t* path) noexcept {
     if (path == nullptr || path[0] == L'\0') {
         return false;
     }
@@ -191,8 +177,8 @@ split(std::wstring_view path, std::wstring_view& parent, std::wstring_view& leaf
         return error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND;
     }
     exists = true;
-    return (attributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0
-           && ((attributes & FILE_ATTRIBUTE_DIRECTORY) != 0) == directory;
+    return ((attributes & FILE_ATTRIBUTE_DIRECTORY) != 0) == directory
+           && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0;
 }
 
 /** Creates one empty ordinary directory or accepts an existing ordinary directory. */
@@ -200,7 +186,7 @@ split(std::wstring_view path, std::wstring_view& parent, std::wstring_view& leaf
     if (CreateDirectoryW(path.c_str(), nullptr) != FALSE) {
         return true;
     }
-    return GetLastError() == ERROR_ALREADY_EXISTS && ordinary_directory(path.c_str());
+    return GetLastError() == ERROR_ALREADY_EXISTS && is_directory(path.c_str());
 }
 
 /** Builds one collision-resistant sibling backup path without consulting global artifact state. */
@@ -237,7 +223,7 @@ split(std::wstring_view path, std::wstring_view& parent, std::wstring_view& leaf
 /** Reads one exact marker without accepting extra bytes or alternate state. */
 [[nodiscard]] bool read_marker(const std::wstring& path, Marker& output) noexcept {
     output = {};
-    if (!ordinary_file(path.c_str())) {
+    if (!is_file(path.c_str())) {
         return false;
     }
     const HANDLE file = CreateFileW(path.c_str(),
@@ -257,8 +243,10 @@ split(std::wstring_view path, std::wstring_view& parent, std::wstring_view& leaf
         ReadFile(file, &output, sizeof output, &read, nullptr) != FALSE && read == sizeof output
         && ReadFile(file, &trailing, 1, &trailingRead, nullptr) != FALSE && trailingRead == 0;
     const bool closed = CloseHandle(file) != FALSE;
-    return complete && closed && output.magic == kMarkerMagic
-           && output.reserved == std::array<std::uint8_t, 3>{} && (output.priorMask & 0xF8U) == 0;
+    const bool validMask = output.magic == kLegacyMarkerMagic ? (output.priorMask & 0xF8U) == 0
+                           : output.magic == kMarkerMagic     ? (output.priorMask & 0xE0U) == 0
+                                                              : false;
+    return complete && closed && validMask && output.reserved == std::array<std::uint8_t, 3>{};
 }
 
 /** Removes one transaction-created final value before restoring its backup. */
@@ -350,12 +338,21 @@ split(std::wstring_view path, std::wstring_view& parent, std::wstring_view& leaf
     try {
         std::wstring finalLua(finalSdkDirectory);
         finalLua.append(L"\\lua");
-        std::array<Resource, 3> resources{
+        std::wstring_view parent;
+        std::wstring_view leaf;
+        if (!split(finalPackPath, parent, leaf)) {
+            return false;
+        }
+        const std::wstring finalDecoder = std::wstring(parent) + plans::kCacheSuffix.data();
+        const std::wstring finalDecoderManifest = finalDecoder + plans::kManifestSuffix.data();
+        std::array<Resource, 5> allResources{
             Resource{nullptr, finalLua.c_str(), {}, true},
             Resource{nullptr, finalPackPath, {}, false},
+            Resource{nullptr, finalDecoder.c_str(), {}, false},
+            Resource{nullptr, finalDecoderManifest.c_str(), {}, false},
             Resource{nullptr, finalCatalogPath, {}, false},
         };
-        for (Resource& resource : resources) {
+        for (Resource& resource : allResources) {
             if (!backup_path(resource.final, resource.backup)) {
                 return false;
             }
@@ -369,11 +366,19 @@ split(std::wstring_view path, std::wstring_view& parent, std::wstring_view& leaf
             && committedAttributes != INVALID_FILE_ATTRIBUTES) {
             return false;
         }
+        Marker marker{};
+        const bool hasPending = pendingAttributes != INVALID_FILE_ATTRIBUTES;
+        const bool hasCommitted = committedAttributes != INVALID_FILE_ATTRIBUTES;
+        if ((hasPending || hasCommitted)
+            && !read_marker(hasPending ? pending : committed, marker)) {
+            return false;
+        }
+        std::span<Resource> resources(allResources);
+        if ((hasPending || hasCommitted) && marker.magic == kLegacyMarkerMagic) {
+            std::swap(allResources[2], allResources[4]);
+            resources = resources.first(3);
+        }
         if (committedAttributes != INVALID_FILE_ATTRIBUTES) {
-            Marker committedMarker{};
-            if (!read_marker(committed, committedMarker)) {
-                return false;
-            }
             for (Resource& resource : resources) {
                 bool exists = false;
                 if (!final_state(resource.final, resource.directory, exists) || !exists) {
@@ -395,7 +400,6 @@ split(std::wstring_view path, std::wstring_view& parent, std::wstring_view& leaf
             return DeleteFileW(committed.c_str()) != FALSE;
         }
 
-        Marker marker{};
         std::uint8_t priorMask = 0;
         bool hasAnyBackup = false;
         for (const Resource& resource : resources) {
@@ -404,11 +408,7 @@ split(std::wstring_view path, std::wstring_view& parent, std::wstring_view& leaf
         if (pendingAttributes == INVALID_FILE_ATTRIBUTES && !hasAnyBackup) {
             return true;
         }
-        const bool hasPending = pendingAttributes != INVALID_FILE_ATTRIBUTES;
         if (hasPending) {
-            if (!read_marker(pending, marker)) {
-                return false;
-            }
             priorMask = marker.priorMask;
         } else {
             for (std::size_t index = 0; index < resources.size(); ++index) {
@@ -464,7 +464,6 @@ split(std::wstring_view path, std::wstring_view& parent, std::wstring_view& leaf
         }
         const std::wstring path = parent + L"\\" + std::wstring(name);
         if ((entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0
-            || (entry.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0
             || !tree_publication::discard(path.c_str())) {
             complete = false;
         }
@@ -522,8 +521,7 @@ Status allocate(const wchar_t* finalPackPath, Stage& output) noexcept {
         }
         const std::wstring finalSdkDirectory = parentPath + L"\\sdk";
         const std::wstring finalCatalogPath = finalSdkDirectory + L"\\catalog.bin";
-        if (!ordinary_directory(parentPath.c_str())
-            || !ordinary_directory(finalSdkDirectory.c_str())
+        if (!is_directory(parentPath.c_str()) || !is_directory(finalSdkDirectory.c_str())
             || !recover(finalSdkDirectory.c_str(), normalizedPack.c_str(), finalCatalogPath.c_str())
             || !discard_stale_stages(parentPath)) {
             return Status::invalidInput;
@@ -570,7 +568,7 @@ Status allocate(const wchar_t* finalPackPath, Stage& output) noexcept {
     return Status::stageAllocation;
 }
 
-/** Commits Lua, pack, and catalog in order while retaining rollback state through finalization. */
+/** Keeps Lua, pack, decoder pair, and catalog in one rollback transaction. */
 Status publish(const Stage& stage,
                const wchar_t* finalSdkDirectory,
                const wchar_t* finalPackPath,
@@ -600,14 +598,15 @@ Status publish(const Stage& stage,
         || !full_path(stage.catalogPath.c_str(), canonicalStageCatalog)
         || !full_path(finalPackPath, canonicalFinalPack)
         || !full_path(finalCatalogPath, canonicalFinalCatalog)
-        || !ordinary_file(canonicalStagePack.c_str())
-        || !ordinary_file(canonicalStageCatalog.c_str())) {
+        || !is_file(canonicalStagePack.c_str()) || !is_file(canonicalStageCatalog.c_str())) {
         return Status::invalidInput;
     }
     const std::wstring expectedStageSdk = canonicalStageRoot + L"\\sdk";
     const std::wstring expectedStageLua = expectedStageSdk + L"\\lua";
     const std::wstring expectedStagePack = canonicalStageRoot + L"\\activity_sdk.pack";
     const std::wstring expectedStageCatalog = expectedStageSdk + L"\\catalog.bin";
+    const std::wstring stageDecoder = canonicalStageRoot + plans::kCacheSuffix.data();
+    const std::wstring stageDecoderManifest = stageDecoder + plans::kManifestSuffix.data();
     const std::wstring expectedFinalCatalog = canonicalFinalSdk + L"\\catalog.bin";
     std::wstring_view stageParent;
     std::wstring_view stageLeaf;
@@ -625,7 +624,8 @@ Status publish(const Stage& stage,
         || !same_text(canonicalStageCatalog, expectedStageCatalog)
         || !same_text(canonicalFinalSdk, expectedFinalSdk)
         || !same_text(canonicalFinalCatalog, expectedFinalCatalog)
-        || !same_text(finalLeaf, L"activity_sdk.pack")) {
+        || !same_text(finalLeaf, L"activity_sdk.pack") || !is_file(stageDecoder.c_str())
+        || !is_file(stageDecoderManifest.c_str())) {
         return Status::invalidInput;
     }
     std::wstring finalLua;
@@ -635,9 +635,13 @@ Status publish(const Stage& stage,
     } catch (...) {
         return Status::invalidInput;
     }
-    std::array<Resource, 3> resources{
+    const std::wstring finalDecoder = std::wstring(finalParent) + plans::kCacheSuffix.data();
+    const std::wstring finalDecoderManifest = finalDecoder + plans::kManifestSuffix.data();
+    std::array<Resource, 5> resources{
         Resource{canonicalStageLua.c_str(), finalLua.c_str(), {}, true},
         Resource{canonicalStagePack.c_str(), canonicalFinalPack.c_str(), {}, false},
+        Resource{stageDecoder.c_str(), finalDecoder.c_str(), {}, false},
+        Resource{stageDecoderManifest.c_str(), finalDecoderManifest.c_str(), {}, false},
         Resource{canonicalStageCatalog.c_str(), canonicalFinalCatalog.c_str(), {}, false},
     };
     std::wstring pendingMarker;

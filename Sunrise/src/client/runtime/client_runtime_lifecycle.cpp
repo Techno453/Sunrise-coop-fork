@@ -22,6 +22,7 @@
 #include "../hooks/network/presence_publication.h"
 #include "../hooks/network/runtime.h"
 #include "../hooks/noclip/runtime.h"
+#include "../hooks/package_path/package_path_redirect.h"
 #include "../hooks/package_trust/package_trust_bypass.h"
 #include "../hooks/polled_input/runtime.h"
 #include "../hooks/retail_log/retail_log_lifecycle.h"
@@ -68,6 +69,13 @@ bool shutdown() noexcept {
     // Detached after presentation, so no later frame can apply the cursor policy.
     hooks::cursor::uninstall();
     hooks::polled_input::uninstall();
+    if (!hooks::teleport::uninstall()) {
+        core::log::write(core::log::Channel::client,
+                         core::log::Level::error,
+                         "ev=shutdown stage=teleport_studio result=fail");
+        ReleaseSRWLockExclusive(&runtime::g_lock);
+        return false;
+    }
     if (!hooks::world_objects::uninstall()) {
         core::log::write(core::log::Channel::client,
                          core::log::Level::error,
@@ -155,6 +163,13 @@ bool shutdown() noexcept {
         ReleaseSRWLockExclusive(&runtime::g_lock);
         return false;
     }
+    if (!hooks::package_path::uninstall()) {
+        core::log::write(core::log::Channel::client,
+                         core::log::Level::error,
+                         "ev=shutdown stage=package_path result=fail");
+        ReleaseSRWLockExclusive(&runtime::g_lock);
+        return false;
+    }
     if (!hooks::assert_handler::uninstall()) {
         ReleaseSRWLockExclusive(&runtime::g_lock);
         return false;
@@ -183,6 +198,7 @@ bool shutdown() noexcept {
         runtime::g_platformModule = nullptr;
     }
     targets::game::retail_log::clear();
+    targets::game::package_path::clear();
     targets::game::content::clear();
     targets::game::network::clear();
     runtime::g_mainStage = runtime::StageState::pending;

@@ -7,8 +7,10 @@
 
 #include "../../middleware/bap/activity_message/sensor_auth_update.h"
 #include "../../state/activity/runtime.h"
+#include "../../state/activity_sdk/scene_triggers.h"
 #include "activity_sdk_behavior_scope.h"
 #include "activity_sdk_mission_internal.h"
+#include "activity_sdk_scene_spawn.h"
 #include "activity_sdk_scriptable_route.h"
 #include "host_runtime.h"
 
@@ -117,14 +119,22 @@ SceneStatus authored_scene_availability(const sdk::BoundView& view,
     return prepare_scene(view, occurrenceRow, slotRow, prepared);
 }
 
-/** Queues the next generation for one exact state-local authored scene. */
+/** Queues the next generation for one exact state-local authored scene, or fires one trigger. */
 SceneStatus activate_authored_scene(const sdk::BoundView& view,
                                     std::uint32_t occurrenceRow,
-                                    std::uint32_t slotRow) noexcept {
+                                    std::uint32_t slotRow,
+                                    std::uint32_t eventKey) noexcept {
     PreparedScene prepared{};
     const SceneStatus status = prepare_scene(view, occurrenceRow, slotRow, prepared);
     if (status != SceneStatus::ready) {
         return status;
+    }
+    if (eventKey != 0
+        && !sdk::scene_listens(view.catalog->authored_scene_event_keys(), slotRow, eventKey)) {
+        return SceneStatus::unknownEvent;
+    }
+    if (prepared.omittedParticipants != 0) {
+        log_omitted_participants(*view.catalog, slotRow, prepared.omittedParticipants);
     }
     if (server::bap::request_activity_state_local_authored_scene_override(
             view.binding,
@@ -133,7 +143,8 @@ SceneStatus activate_authored_scene(const sdk::BoundView& view,
             prepared.effectiveRegion,
             prepared.activityClientGeneration,
             nullptr,
-            prepared.sceneDependencies)) {
+            prepared.sceneDependencies,
+            eventKey)) {
         return SceneStatus::queued;
     }
     return SceneStatus::refused;
@@ -174,13 +185,19 @@ SceneStatus play_dialogue_cue(const sdk::BoundView& view,
     return SceneStatus::refused;
 }
 
-SceneStatus directive_availability(const sdk::BoundView& view,
-                                   std::uint32_t occurrenceRow,
-                                   std::uint32_t slotRow,
-                                   std::uint32_t nameHash,
-                                   std::int32_t elementIndex) noexcept {
+/** Checks one exact type-68 slot; the answer holds for every element the slot carries. */
+SceneStatus directives_availability(const sdk::BoundView& view,
+                                    std::uint32_t occurrenceRow,
+                                    std::uint32_t slotRow) noexcept {
     PreparedScene prepared{};
-    return prepare_directive(view, occurrenceRow, slotRow, nameHash, elementIndex, prepared);
+    return prepare_typed_behavior(view,
+                                  occurrenceRow,
+                                  slotRow,
+                                  sdk::format::kDirectiveSlotType,
+                                  sdk::format::kDirectiveComponentClass,
+                                  sdk::format::kDirectiveAuthSchema,
+                                  false,
+                                  prepared);
 }
 
 /** Sets one HUD directive element's state and visibility on a prepared objective slot. */
@@ -556,21 +573,6 @@ set_cinematic_active_reserved(const sdk::BoundView& view,
                                                       : SceneStatus::ready;
 }
 
-SceneStatus sequence_slot_availability(const sdk::BoundView& view, std::uint32_t slotRow) noexcept {
-    std::uint32_t occurrenceRow = 0;
-    const SceneStatus found = current_behavior_occurrence(view, slotRow, occurrenceRow);
-    return found == SceneStatus::ready ? sequence_availability(view, occurrenceRow, slotRow)
-                                       : found;
-}
-
-SceneStatus objective_reset_slot_availability(const sdk::BoundView& view,
-                                              std::uint32_t slotRow) noexcept {
-    std::uint32_t occurrenceRow = 0;
-    const SceneStatus found = current_behavior_occurrence(view, slotRow, occurrenceRow);
-    return found == SceneStatus::ready ? objective_reset_availability(view, occurrenceRow, slotRow)
-                                       : found;
-}
-
 SceneStatus
 reset_objectives_slot_reserved(const sdk::BoundView& view,
                                std::uint32_t slotRow,
@@ -591,14 +593,6 @@ play_sequence_slot_reserved(const sdk::BoundView& view,
     return found == SceneStatus::ready
                ? play_sequence_reserved(view, occurrenceRow, slotRow, reservation)
                : found;
-}
-
-SceneStatus cinematic_slot_availability(const sdk::BoundView& view,
-                                        std::uint32_t slotRow) noexcept {
-    std::uint32_t occurrenceRow = 0;
-    const SceneStatus found = current_behavior_occurrence(view, slotRow, occurrenceRow);
-    return found == SceneStatus::ready ? cinematic_availability(view, occurrenceRow, slotRow)
-                                       : found;
 }
 
 /**
@@ -694,12 +688,6 @@ SceneStatus play_performance_slot(const sdk::BoundView& view,
                : SceneStatus::refused;
 }
 
-SceneStatus task_slot_availability(const sdk::BoundView& view, std::uint32_t slotRow) noexcept {
-    std::uint32_t occurrenceRow = 0;
-    const SceneStatus found = current_behavior_occurrence(view, slotRow, occurrenceRow);
-    return found == SceneStatus::ready ? task_availability(view, occurrenceRow, slotRow) : found;
-}
-
 SceneStatus
 activate_task_slot_reserved(const sdk::BoundView& view,
                             std::uint32_t slotRow,
@@ -708,16 +696,6 @@ activate_task_slot_reserved(const sdk::BoundView& view,
     const SceneStatus found = current_behavior_occurrence(view, slotRow, occurrenceRow);
     return found == SceneStatus::ready
                ? activate_task_reserved(view, occurrenceRow, slotRow, reservation)
-               : found;
-}
-
-SceneStatus dialogue_cue_slot_availability(const sdk::BoundView& view,
-                                           std::uint32_t slotRow,
-                                           std::uint16_t cueIndex) noexcept {
-    std::uint32_t occurrenceRow = 0;
-    const SceneStatus found = current_behavior_occurrence(view, slotRow, occurrenceRow);
-    return found == SceneStatus::ready
-               ? dialogue_cue_availability(view, occurrenceRow, slotRow, cueIndex)
                : found;
 }
 
@@ -751,6 +729,13 @@ SceneStatus activate_authored_scene_reserved(const sdk::BoundView& view,
     const SceneStatus status = prepare_scene(view, occurrenceRow, slotRow, prepared);
     if (status != SceneStatus::ready) {
         return status;
+    }
+    if (eventKey != 0 && !stop
+        && !sdk::scene_listens(view.catalog->authored_scene_event_keys(), slotRow, eventKey)) {
+        return SceneStatus::unknownEvent;
+    }
+    if (prepared.omittedParticipants != 0) {
+        log_omitted_participants(*view.catalog, slotRow, prepared.omittedParticipants);
     }
     if (server::bap::request_activity_state_local_authored_scene_override(
             view.binding,
@@ -847,6 +832,10 @@ const char* status_name(SceneStatus status) noexcept {
         return "mission_seed_pending";
     case SceneStatus::outputBusy:
         return "output_busy";
+    case SceneStatus::dependencyCapacity:
+        return "dependency_capacity";
+    case SceneStatus::unknownEvent:
+        return "unknown_event";
     case SceneStatus::refused:
         return "refused";
     }

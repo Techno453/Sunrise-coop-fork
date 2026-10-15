@@ -72,14 +72,6 @@ void service(std::uint64_t now) noexcept;
                                            std::uint64_t sessionId) noexcept;
 
 /**
- * Reports whether replication may produce entity output for one peer.
- * View establishment is a hard gate: a mismatched signature means no entity output at all.
- * @param sessionId Group session the link carries.
- * @return True only once a compatible view is bound.
- */
-[[nodiscard]] bool view_accepted(std::uint64_t sessionId) noexcept;
-
-/**
  * Checks that one endpoint owns the admitted row for a group session.
  * @param endpoint Peer endpoint in host order.
  * @param sessionId Group session named by the peer message.

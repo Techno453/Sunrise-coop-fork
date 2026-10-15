@@ -129,14 +129,12 @@ void report_perk_banks(const char* family, const layout::Appearance& block) noex
  * @param block Shared appearance block.
  * @param summary Shared summary block.
  * @param reservedSize Reserved bytes between identity and appearance.
- * @param tailSize Reserved bytes after the summary.
- * @param output Exact record storage.
+ * @param output Exact record storage; bytes after the summary stay zero.
  */
 void copy_record(const layout::Identity& identity,
                  const layout::Appearance& block,
                  const layout::Summary& summary,
                  std::size_t reservedSize,
-                 std::size_t tailSize,
                  std::span<std::byte> output) noexcept {
     std::fill(output.begin(), output.end(), std::byte{});
     std::size_t cursor = 0;
@@ -145,8 +143,6 @@ void copy_record(const layout::Identity& identity,
     std::memcpy(output.data() + cursor, &block, sizeof block);
     cursor += sizeof block;
     std::memcpy(output.data() + cursor, &summary, sizeof summary);
-    cursor += sizeof(summary) + tailSize;
-    (void)cursor;
 }
 
 } // namespace
@@ -168,7 +164,6 @@ bool encode_family3(const state::CharacterState& character,
                 block,
                 build_summary(light, character.equippedTitleRecordIndex),
                 kFamily3ReservedSize,
-                kFamily3TailSize,
                 record);
     // Both stamps are the last reset before sign-in. Zero would make the client run a daily and
     // a weekly rollover as soon as it accepts the record.
@@ -205,7 +200,7 @@ bool encode_family0(const state::CharacterState& character,
             break;
         }
     }
-    copy_record(identity, block, summary, 0, kFamily0TailSize, record);
+    copy_record(identity, block, summary, 0, record);
     const layout::Family0Tail tail{};
     std::memcpy(record.data() + kFamily0RecordSize - kFamily0TailSize, &tail, sizeof tail);
     return true;

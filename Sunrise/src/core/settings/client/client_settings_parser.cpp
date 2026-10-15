@@ -15,6 +15,8 @@ bool Parser::client_settings(client::Settings& output, bool& endpointConfigured)
     bool hasCustomBootflowTextures = false;
     bool hasSocketMenuRouting = false;
     bool hasRevealLoreBooks = false;
+    bool hasCheats = false;
+    bool hasDumpPackageKeys = false;
     bool hasServerEndpoint = false;
     bool hasMachineId = false;
     if (consume('}')) {
@@ -63,6 +65,16 @@ bool Parser::client_settings(client::Settings& output, bool& endpointConfigured)
                 return false;
             }
             hasRevealLoreBooks = true;
+        } else if (key == "cheats") {
+            if (hasCheats || !boolean(candidate.cheats)) {
+                return false;
+            }
+            hasCheats = true;
+        } else if (key == "dump_package_keys") {
+            if (hasDumpPackageKeys || !boolean(candidate.dumpPackageKeys)) {
+                return false;
+            }
+            hasDumpPackageKeys = true;
         } else if (!skip_value(0)) {
             return false;
         }

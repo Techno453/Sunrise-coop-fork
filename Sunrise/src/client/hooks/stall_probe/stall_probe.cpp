@@ -12,6 +12,7 @@
 #include <TlHelp32.h>
 #include <array>
 #include <atomic>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -39,6 +40,8 @@ constexpr std::size_t kFrameLimit = 16;
 constexpr std::size_t kFramesPerLine = 8;
 /** Time the stopping side waits for the watcher to leave its loop. */
 constexpr DWORD kJoinMs = 2'000;
+/** No image maps below the first 64 KiB; a stack slot holding less is data, not a return. */
+constexpr std::uint64_t kLowestCodeAddress = 0x10000;
 
 HANDLE g_thread{};
 HANDLE g_stop{};
@@ -57,19 +60,68 @@ void resolve_module_ranges() noexcept {
     (void)diagnostics::module_range(own, g_ownRange);
 }
 
-/** Formats one code address as a module-relative token, or raw hex outside both images. */
-void format_address(std::uint64_t value, char* out, std::size_t size) noexcept {
+/**
+ * Names the loaded module holding one address, as "<basename>+0x<rva>".
+ * Takes the loader lock, so it runs only after every suspended thread has resumed.
+ * @return True when a module owns the address and the token fit.
+ */
+[[nodiscard]] bool
+format_module_address(std::uint64_t value, char* out, std::size_t size) noexcept {
+    HMODULE module = nullptr;
+    diagnostics::ModuleRange range{};
+    if (value < kLowestCodeAddress
+        || GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS
+                                  | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                              std::bit_cast<LPCWSTR>(static_cast<std::uintptr_t>(value)),
+                              &module)
+               == 0
+        || !diagnostics::module_range(module, range) || !diagnostics::contains(range, value)) {
+        return false;
+    }
+    std::array<wchar_t, MAX_PATH> path{};
+    const DWORD length = GetModuleFileNameW(module, path.data(), static_cast<DWORD>(path.size()));
+    if (length == 0 || length >= path.size()) {
+        return false;
+    }
+    std::size_t start = length;
+    while (start > 0 && path[start - 1] != L'\\' && path[start - 1] != L'/') {
+        --start;
+    }
+    // The extension carries nothing the module name does not, and the line has a budget.
+    std::size_t stop = length;
+    if (stop > start + 4 && path[stop - 4] == L'.') {
+        stop -= 4;
+    }
+    const int written = std::snprintf(
+        out,
+        size,
+        "%.*ls+0x%llX",
+        static_cast<int>(stop - start),
+        path.data() + start,
+        static_cast<unsigned long long>(value - reinterpret_cast<std::uintptr_t>(module)));
+    return written > 0 && static_cast<std::size_t>(written) < size;
+}
+
+/**
+ * Formats one code address as a module-relative token, or raw hex when no image owns it.
+ * @return True when the game image, this DLL or another loaded module owns the address.
+ */
+bool format_address(std::uint64_t value, char* out, std::size_t size) noexcept {
     if (diagnostics::contains(g_gameRange, value)) {
         std::snprintf(
             out, size, "exe+0x%llX", static_cast<unsigned long long>(value - g_gameRange.base));
-        return;
+        return true;
     }
     if (diagnostics::contains(g_ownRange, value)) {
         std::snprintf(
             out, size, "own+0x%llX", static_cast<unsigned long long>(value - g_ownRange.base));
-        return;
+        return true;
+    }
+    if (format_module_address(value, out, size)) {
+        return true;
     }
     std::snprintf(out, size, "0x%llX", static_cast<unsigned long long>(value));
+    return false;
 }
 
 /**
@@ -105,7 +157,7 @@ void format_address(std::uint64_t value, char* out, std::size_t size) noexcept {
     return captured;
 }
 
-/** Logs one thread's rip, rsp and every in-image return address on its stack. */
+/** Logs one thread's rip, rsp and every module-owned return address on its stack. */
 void report_thread(std::uint32_t tid) noexcept {
     alignas(16) CONTEXT context{};
     std::array<std::byte, kStackWindowBytes> stack{};
@@ -113,8 +165,8 @@ void report_thread(std::uint32_t tid) noexcept {
     if (!capture_thread(tid, context, stack.data(), stackBytes)) {
         return;
     }
-    std::array<char, 32> ripText{};
-    format_address(context.Rip, ripText.data(), ripText.size());
+    std::array<char, 64> ripText{};
+    (void)format_address(context.Rip, ripText.data(), ripText.size());
     std::array<char, core::log::kLineCapacity> line{};
     int written = std::snprintf(line.data(),
                                 line.size(),
@@ -135,8 +187,9 @@ void report_thread(std::uint32_t tid) noexcept {
     for (std::size_t index = 0; index * 8 + 8 <= stackBytes && frames < kFrameLimit; ++index) {
         std::uint64_t value = 0;
         std::memcpy(&value, stack.data() + index * 8, sizeof value);
-        if (!diagnostics::contains(g_gameRange, value)
-            && !diagnostics::contains(g_ownRange, value)) {
+        // A slot no image owns is data, not a return address.
+        std::array<char, 64> text{};
+        if (!format_address(value, text.data(), text.size())) {
             continue;
         }
         if (onLine == 0) {
@@ -144,8 +197,6 @@ void report_thread(std::uint32_t tid) noexcept {
                 line.data(), line.size(), "ev=probe stage=stall set=frames tid=0x%08X", tid);
             offset = prefix > 0 ? static_cast<std::size_t>(prefix) : 0;
         }
-        std::array<char, 32> text{};
-        format_address(value, text.data(), text.size());
         const int piece = std::snprintf(
             line.data() + offset, line.size() - offset, " f%zu=%s", frames, text.data());
         if (piece > 0) {

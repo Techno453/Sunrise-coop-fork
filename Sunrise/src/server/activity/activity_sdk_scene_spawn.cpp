@@ -1,7 +1,11 @@
 #include "activity_sdk_scene_spawn.h"
 
 #include <algorithm>
+#include <array>
+#include <cstdio>
+#include <string_view>
 
+#include "../../core/logging/log.h"
 #include "../../state/activity_sdk/generated_world/runtime.h"
 #include "activity_sdk_device_internal.h"
 #include "activity_sdk_mission_internal.h"
@@ -113,6 +117,39 @@ prepare_pair(const sdk::BoundView& view, std::uint32_t sceneState, SceneSpawnPai
 }
 
 } // namespace
+
+/** Carries the cast's squads only when the schema holds them all. */
+bool scene_dependencies(
+    const SceneSpawnPlan& plan,
+    middleware::bap::activity_message::sensor_auth_update::AuthoredSceneDependencies&
+        output) noexcept {
+    output = {};
+    if (plan.count > output.references.size()) {
+        return false;
+    }
+    for (std::size_t index = 0; index < plan.count; ++index) {
+        const host::ScriptableTarget& source = plan.pairs[index].sourceTarget;
+        output.references[output.count++] = {source.registryKey,
+                                             static_cast<std::int8_t>(source.slotType),
+                                             static_cast<std::int16_t>(source.slotIndex)};
+    }
+    return true;
+}
+
+/** Names the scene and how many of its squad participants the host did not cast. */
+void log_omitted_participants(const sdk::Catalog& catalog,
+                              std::uint32_t sceneSlotRow,
+                              std::size_t omitted) noexcept {
+    const std::string_view scene = sceneSlotRow < catalog.slots().size()
+                                       ? catalog.string(catalog.slots()[sceneSlotRow].id)
+                                       : std::string_view{};
+    core::log::writef(core::log::Channel::server,
+                      core::log::Level::info,
+                      "ev=scene_cast result=partial scene=%.*s omitted=%zu",
+                      static_cast<int>(scene.size()),
+                      scene.data(),
+                      omitted);
+}
 
 /** Returns immutable scene cast identities without consulting live output state. */
 SceneStatus resolve_scene_spawn_plan(const sdk::BoundView& view,

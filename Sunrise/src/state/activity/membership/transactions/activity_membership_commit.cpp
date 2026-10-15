@@ -131,7 +131,7 @@ namespace {
 
 } // namespace
 
-/** Commits one identity, client-state, refresh, or acknowledgement operation. */
+/** Commits one identity, client-state, refresh, republish, or acknowledgement operation. */
 bool commit(PendingMutation& mutation, CommittedClientState* clientState) noexcept {
     if (clientState != nullptr) {
         *clientState = {};

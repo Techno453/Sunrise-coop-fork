@@ -156,7 +156,10 @@ bool apply_shared(ActivityState& state,
         record.membership = {};
         record.peerReservations = {};
         record.membership.epoch = membership::session_epoch(record.createdRevision);
+        // Issued tokens stay, so the next grant differs from any mirror the client kept.
+        const auto issuedTokens = record.bubbleAuthority.issuedTokens;
         record.bubbleAuthority = {};
+        record.bubbleAuthority.issuedTokens = issuedTokens;
         record.joined = true;
         return true;
     }

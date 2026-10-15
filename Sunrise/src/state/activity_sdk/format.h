@@ -10,29 +10,29 @@ namespace sunrise::state::activity_sdk::format {
 /** Eight-byte identity at the start of every runtime SDK pack. */
 inline constexpr std::array<char, 8> kMagic{'S', 'R', 'S', 'D', 'K', 'P', '0', '1'};
 /** Runtime-pack schema version accepted by this reader. */
-inline constexpr std::uint32_t kVersion = 40;
+inline constexpr std::uint32_t kVersion = 43;
 /** The ABI contains only activity identity, topology, placement, and panel metadata. */
-inline constexpr std::uint32_t kSectionCount = 50;
+inline constexpr std::uint32_t kSectionCount = 51;
 #if defined(SUNRISE_ACTIVITY_SDK_TESTING)
 /** The runtime accepts only the checked generated SDK build. Each pin is a SHA-256 digest. */
 inline constexpr std::array<std::byte, 32> kExpectedSdkBuildDigest{
-    std::byte{0x13}, std::byte{0x1A}, std::byte{0xA4}, std::byte{0x2D}, std::byte{0xE2},
-    std::byte{0x8E}, std::byte{0xBF}, std::byte{0x73}, std::byte{0x90}, std::byte{0xA1},
-    std::byte{0xBD}, std::byte{0x47}, std::byte{0x7C}, std::byte{0xC0}, std::byte{0x16},
-    std::byte{0xBF}, std::byte{0x93}, std::byte{0x0E}, std::byte{0x1B}, std::byte{0x00},
-    std::byte{0x45}, std::byte{0x9F}, std::byte{0x89}, std::byte{0xDD}, std::byte{0xF4},
-    std::byte{0x9F}, std::byte{0xBE}, std::byte{0xED}, std::byte{0x3B}, std::byte{0x42},
-    std::byte{0xA3}, std::byte{0x20},
+    std::byte{0x07}, std::byte{0xF5}, std::byte{0xB4}, std::byte{0x50}, std::byte{0xC3},
+    std::byte{0x8F}, std::byte{0x2E}, std::byte{0xD5}, std::byte{0x46}, std::byte{0x71},
+    std::byte{0x0C}, std::byte{0xD7}, std::byte{0xE6}, std::byte{0x5A}, std::byte{0x74},
+    std::byte{0xD1}, std::byte{0x49}, std::byte{0xF0}, std::byte{0xC9}, std::byte{0x79},
+    std::byte{0xDB}, std::byte{0x47}, std::byte{0x8D}, std::byte{0xF5}, std::byte{0x0F},
+    std::byte{0xB9}, std::byte{0xD7}, std::byte{0x8A}, std::byte{0x90}, std::byte{0x53},
+    std::byte{0xDB}, std::byte{0xD3},
 };
 /** The runtime accepts only the full generated row projection for this build. */
 inline constexpr std::array<std::byte, 32> kExpectedPayloadDigest{
-    std::byte{0x39}, std::byte{0xE9}, std::byte{0x03}, std::byte{0x03}, std::byte{0x9B},
-    std::byte{0xB6}, std::byte{0x0C}, std::byte{0x08}, std::byte{0xCA}, std::byte{0x1E},
-    std::byte{0xCB}, std::byte{0x7D}, std::byte{0x19}, std::byte{0x9A}, std::byte{0x39},
-    std::byte{0x24}, std::byte{0xE8}, std::byte{0x3A}, std::byte{0x3F}, std::byte{0xBF},
-    std::byte{0x05}, std::byte{0x49}, std::byte{0x41}, std::byte{0x7B}, std::byte{0x7D},
-    std::byte{0xDB}, std::byte{0x53}, std::byte{0xC2}, std::byte{0x3F}, std::byte{0x98},
-    std::byte{0x0A}, std::byte{0x65},
+    std::byte{0xC6}, std::byte{0x68}, std::byte{0xCC}, std::byte{0x09}, std::byte{0x0C},
+    std::byte{0xE8}, std::byte{0x54}, std::byte{0xAB}, std::byte{0x43}, std::byte{0xA1},
+    std::byte{0x6E}, std::byte{0xD3}, std::byte{0xBA}, std::byte{0x17}, std::byte{0x6A},
+    std::byte{0xBA}, std::byte{0xBA}, std::byte{0x46}, std::byte{0xE3}, std::byte{0x18},
+    std::byte{0xF0}, std::byte{0x55}, std::byte{0x03}, std::byte{0x16}, std::byte{0x53},
+    std::byte{0xFE}, std::byte{0x14}, std::byte{0xA5}, std::byte{0x81}, std::byte{0x02},
+    std::byte{0xCF}, std::byte{0x42},
 };
 /** The runtime pins the independently replayed package and executable identity. */
 inline constexpr std::array<std::byte, 32> kExpectedContentKeyDigest{
@@ -46,13 +46,13 @@ inline constexpr std::array<std::byte, 32> kExpectedContentKeyDigest{
 };
 /** The runtime pins the complete normalized logical-IR identity. */
 inline constexpr std::array<std::byte, 32> kExpectedLogicalIrDigest{
-    std::byte{0x1E}, std::byte{0x91}, std::byte{0xDC}, std::byte{0xBB}, std::byte{0x7D},
-    std::byte{0xCD}, std::byte{0x5E}, std::byte{0xE0}, std::byte{0xE5}, std::byte{0x39},
-    std::byte{0x2A}, std::byte{0xF9}, std::byte{0xF6}, std::byte{0x79}, std::byte{0x0B},
-    std::byte{0x03}, std::byte{0x68}, std::byte{0xA0}, std::byte{0x61}, std::byte{0x93},
-    std::byte{0xDB}, std::byte{0xA2}, std::byte{0xC8}, std::byte{0xB8}, std::byte{0xD5},
-    std::byte{0xFA}, std::byte{0xC6}, std::byte{0x0A}, std::byte{0x88}, std::byte{0xEB},
-    std::byte{0xF6}, std::byte{0x62},
+    std::byte{0xA9}, std::byte{0x7E}, std::byte{0x2A}, std::byte{0x04}, std::byte{0xF4},
+    std::byte{0x0D}, std::byte{0x31}, std::byte{0x56}, std::byte{0xDD}, std::byte{0x6C},
+    std::byte{0x47}, std::byte{0xFD}, std::byte{0x83}, std::byte{0x59}, std::byte{0xB4},
+    std::byte{0x50}, std::byte{0x3C}, std::byte{0xAC}, std::byte{0x81}, std::byte{0xC9},
+    std::byte{0x84}, std::byte{0x33}, std::byte{0x60}, std::byte{0x89}, std::byte{0xB4},
+    std::byte{0xD4}, std::byte{0x39}, std::byte{0xAA}, std::byte{0x81}, std::byte{0xE4},
+    std::byte{0xD7}, std::byte{0x46},
 };
 #endif
 /** UINT32_MAX is the only out-of-band row or optional-string index. */
@@ -80,9 +80,16 @@ inline constexpr std::uint32_t kSlotReaderVerified = 0x1U;
 inline constexpr std::uint32_t kSlotSchemaJoinExact = 0x2U;
 /** A type-53 descriptor resolved an exact authored cue list and bounded cue count. */
 inline constexpr std::uint32_t kSlotDialogueCuesExact = 0x4U;
-/** Slot rows expose only reader, schema-join, and authored-dialogue facts. */
-inline constexpr std::uint32_t kSlotFlagMask =
-    kSlotReaderVerified | kSlotSchemaJoinExact | kSlotDialogueCuesExact;
+/**
+ * The scene slot's package config references no resource at all: the scene exists but was
+ * authored empty. A resource that is referenced but cannot be read is a generation error and
+ * gets no flag.
+ */
+inline constexpr std::uint32_t kSlotAuthoredSceneUnresourced = 0x8U;
+/** Slot rows expose only reader, schema-join, authored-dialogue, and unresourced-scene facts. */
+inline constexpr std::uint32_t kSlotFlagMask = kSlotReaderVerified | kSlotSchemaJoinExact
+                                               | kSlotDialogueCuesExact
+                                               | kSlotAuthoredSceneUnresourced;
 /** Exact generated slot tuples for authored sequence and cinematic actions. */
 inline constexpr std::uint32_t kObjectSlotType = 4U;
 inline constexpr std::uint32_t kObjectComponentClass = 0x80809927U;
@@ -108,6 +115,19 @@ inline constexpr std::uint32_t kOccupancyAuthSchema = 0x80809532U;
 inline constexpr std::uint32_t kDirectiveSlotType = 68U;
 inline constexpr std::uint32_t kDirectiveComponentClass = 0x80804F53U;
 inline constexpr std::uint32_t kDirectiveAuthSchema = 0x80804F67U;
+/** Packed directive table layout; only the counter bit of an element's flag word is named. */
+inline constexpr std::uint32_t kDirectiveTableClass = 0x80804F72U;
+inline constexpr std::uint32_t kDirectiveEntryArrayOffset = 0x8U;
+inline constexpr std::uint32_t kDirectiveEntryClass = 0x80804F74U;
+inline constexpr std::uint32_t kDirectiveEntrySize = 0x28U;
+inline constexpr std::uint32_t kDirectiveEntryElementsOffset = 0x18U;
+inline constexpr std::uint32_t kDirectiveElementClass = 0x80804F76U;
+inline constexpr std::uint32_t kDirectiveElementPackedSize = 0x24U;
+inline constexpr std::uint32_t kDirectiveElementTitleOffset = 0x0U;
+inline constexpr std::uint32_t kDirectiveElementDescriptionOffset = 0x8U;
+inline constexpr std::uint32_t kDirectiveElementProgressOffset = 0x10U;
+inline constexpr std::uint32_t kDirectiveElementFlagsOffset = 0x20U;
+inline constexpr std::uint32_t kDirectiveElementCounter = 0x1U;
 /** Exact generated slot tuple and descriptor field for authored dialogue. */
 inline constexpr std::uint32_t kDialogueSlotType = 53U;
 inline constexpr std::uint32_t kDialogueComponentClass = 0x80804F4BU;
@@ -245,7 +265,9 @@ inline constexpr std::uint32_t kSquadMemberActorClassExact = 0x1U;
 inline constexpr std::uint32_t kSquadMemberCandidateCountsComplete = 0x2U;
 inline constexpr std::uint32_t kSquadMemberCandidateCountsInvariant = 0x4U;
 inline constexpr std::uint32_t kSquadMemberNoNullCandidates = 0x8U;
-inline constexpr std::uint32_t kSquadMemberFlagMask = 0xFU;
+/** Every authored candidate resolves to the same four-byte spawn profile. */
+inline constexpr std::uint32_t kSquadMemberSpawnProfileExact = 0x10U;
+inline constexpr std::uint32_t kSquadMemberFlagMask = 0x1FU;
 inline constexpr std::uint32_t kSquadMemberInvariantReadyMask =
     kSquadMemberCandidateCountsComplete | kSquadMemberCandidateCountsInvariant
     | kSquadMemberNoNullCandidates;
@@ -266,6 +288,45 @@ inline constexpr std::uint32_t kAuthoredSceneSenseSchema = 0x8080626AU;
 inline constexpr std::uint32_t kAuthoredSceneAuthSchema = 0x8080626BU;
 inline constexpr std::uint32_t kAuthoredSceneResourceRelativeOffset = 0x60U;
 inline constexpr std::uint32_t kAuthoredSceneResourceClass = 0x80809C0FU;
+/**
+ * The resource names its graph at a fixed field. The graph's gate table is an array field whose
+ * rows each name one gate body by absolute offset. A body opens with the graph's tag and the row
+ * class, then carries the event key and the gate's ordinal (-1 opens every scene).
+ */
+inline constexpr std::uint32_t kAuthoredSceneGraphRelativeOffset = 0xC0U;
+inline constexpr std::uint32_t kAuthoredSceneGraphClass = 0x80809C36U;
+inline constexpr std::uint32_t kPackageArrayMarker = 0x80809FBDU;
+inline constexpr std::uint32_t kAuthoredSceneGateTableOffset = 0xE8U;
+inline constexpr std::uint32_t kAuthoredSceneGateRowClass = 0x8080637DU;
+inline constexpr std::uint32_t kAuthoredSceneGateRowSize = 0xC0U;
+inline constexpr std::uint32_t kAuthoredSceneGateBodyClass = 0x8080638AU;
+inline constexpr std::uint32_t kAuthoredSceneGateBodyOffset = 0x8U;
+inline constexpr std::uint32_t kAuthoredSceneGateSize = 0x60U;
+inline constexpr std::uint32_t kAuthoredSceneGateClassOffset = 0x4U;
+inline constexpr std::uint32_t kAuthoredSceneGateKeyOffset = 0x10U;
+inline constexpr std::uint32_t kAuthoredSceneGateOrdinalOffset = 0x58U;
+/** More gates than any installed scene declares; a larger count is a misread graph. */
+inline constexpr std::uint32_t kAuthoredSceneGateCapacity = 64U;
+/** A gate body's own connection list names the blocks that wait on the gate. */
+inline constexpr std::uint32_t kAuthoredSceneGateConnectionOffset = 0x20U;
+inline constexpr std::uint32_t kAuthoredSceneGateListenerCountOffset = 0x30U;
+/**
+ * A connection list names the ports a pin fires: a 64-bit count, then a relative pointer to u32
+ * ports, then one port or -1. Ports 0 to gates-2 are the gate ordinals.
+ */
+inline constexpr std::uint32_t kAuthoredSceneConnectionClass = 0x80806359U;
+inline constexpr std::uint32_t kAuthoredSceneConnectionCountOffset = 0x10U;
+inline constexpr std::uint32_t kAuthoredSceneConnectionListOffset = 0x18U;
+inline constexpr std::uint32_t kAuthoredSceneConnectionSingleOffset = 0x20U;
+/** Element class of a package array of u32 values. */
+inline constexpr std::uint32_t kPackageU32ArrayClass = 0x80800007U;
+inline constexpr std::uint32_t kAuthoredSceneEventKeyExact = 0x1U;
+/** A graph block waits on the gate. */
+inline constexpr std::uint32_t kAuthoredSceneEventKeyListened = 0x2U;
+/** A graph block fires the gate, so the scene sets it itself. */
+inline constexpr std::uint32_t kAuthoredSceneEventKeyFired = 0x4U;
+inline constexpr std::uint32_t kAuthoredSceneEventKeyFlagMask =
+    kAuthoredSceneEventKeyExact | kAuthoredSceneEventKeyListened | kAuthoredSceneEventKeyFired;
 /** Scene-to-squad rows retain one exact same-object package reference. */
 inline constexpr std::uint32_t kAuthoredSceneSquadSameObjectExact = 0x1U;
 /** A type-42 performance sensor names the same-object squad it drives at descriptor +0x58. */
@@ -293,9 +354,22 @@ inline constexpr std::uint32_t kActorSequenceLocalDefinitionClass = 0x8080815FU;
 inline constexpr std::uint32_t kActorSequenceGlobalArrayOffset = 152;
 inline constexpr std::uint32_t kActorSequenceLocalArrayOffset = 16;
 inline constexpr std::uint32_t kActorSequenceOwnerSourceClass = 0x808082ECU;
-inline constexpr std::uint32_t kAuthoredSceneSquadBlockClassRelativeOffset = 0xA4U;
+/**
+ * A type-43 config lists its participants as a table: a 64-bit count, the table class, then one
+ * 64-bit pointer per participant, each relative to its own field. A pointer lands on a block's
+ * payload; the block's class sits in the four bytes before it. Only squad blocks become edges.
+ */
+inline constexpr std::uint32_t kAuthoredSceneParticipantCountRelativeOffset = 0x88U;
+inline constexpr std::uint32_t kAuthoredSceneParticipantTableClassRelativeOffset = 0x90U;
+inline constexpr std::uint32_t kAuthoredSceneParticipantTableRelativeOffset = 0x98U;
+inline constexpr std::uint32_t kAuthoredSceneParticipantTableClass = 0x80806268U;
+inline constexpr std::uint32_t kAuthoredSceneParticipantPointerSize = 8U;
+inline constexpr std::uint32_t kAuthoredSceneParticipantClassSize = 4U;
+/** More participants than any installed scene declares; a larger count is a misread config. */
+inline constexpr std::uint32_t kAuthoredSceneParticipantCapacity = 64U;
 inline constexpr std::uint32_t kAuthoredSceneSquadBlockClass = 0x80806262U;
-inline constexpr std::uint32_t kAuthoredSceneSquadReferenceRelativeOffset = 0xB0U;
+/** Squad reference inside a squad block's payload: object key, then slot type and index. */
+inline constexpr std::uint32_t kAuthoredSceneSquadPayloadReferenceOffset = 0x8U;
 /** Exact type-38 task edge to the authored type-3 objective component it mutates. */
 inline constexpr std::uint32_t kTaskSlotType = 38U;
 inline constexpr std::uint32_t kTaskComponentClass = 0x80807D87U;
@@ -367,7 +441,7 @@ inline constexpr std::int64_t kAbsentSignedValue = (-0x7FFFFFFFFFFFFFFFLL - 1);
 
 /** Fixed packed byte sizes make producer and consumer ABI drift fail at compile time. */
 inline constexpr std::size_t kSectionSize = 16;
-inline constexpr std::size_t kHeaderSize = 960;
+inline constexpr std::size_t kHeaderSize = 976;
 inline constexpr std::size_t kStringRefSize = 8;
 inline constexpr std::size_t kRangeSize = 8;
 inline constexpr std::size_t kActivitySize = 124;
@@ -388,13 +462,14 @@ inline constexpr std::size_t kRsatDescriptorSize = 92;
 inline constexpr std::size_t kRsatSchemaSize = 64;
 inline constexpr std::size_t kRsatFieldSize = 40;
 inline constexpr std::size_t kSquadSize = 52;
-inline constexpr std::size_t kSquadMemberSize = 44;
+inline constexpr std::size_t kSquadMemberSize = 48;
 inline constexpr std::size_t kSquadAnchorSize = 48;
 inline constexpr std::size_t kAuthoredSceneResourceSize = 40;
+inline constexpr std::size_t kAuthoredSceneEventKeySize = 40;
 inline constexpr std::size_t kAuthoredSceneSquadEdgeSize = 40;
 inline constexpr std::size_t kTaskTargetSize = 44;
 inline constexpr std::size_t kDialogueCueTextSize = 36;
-inline constexpr std::size_t kDirectiveElementSize = 56;
+inline constexpr std::size_t kDirectiveElementSize = 76;
 inline constexpr std::size_t kBehaviorProgramSize = 28;
 inline constexpr std::size_t kBehaviorInputSize = 36;
 inline constexpr std::size_t kBehaviorChannelWriteSize = 16;
@@ -611,6 +686,7 @@ inline constexpr std::size_t kSquadMemberActorClassIndex = 20;
 inline constexpr std::size_t kSquadMemberFlags = 24;
 inline constexpr std::size_t kSquadMemberCandidateCounts = 28;
 inline constexpr std::size_t kSquadMemberDefaultCount = 40;
+inline constexpr std::size_t kSquadMemberAuthoredSpawnProfile = 44;
 inline constexpr std::size_t kSquadAnchorId = 0;
 inline constexpr std::size_t kSquadAnchorSquadIndex = 8;
 inline constexpr std::size_t kSquadAnchorPointOrdinal = 12;
@@ -707,9 +783,11 @@ enum class SectionIndex : std::uint32_t {
     combatObjectiveGroups,
     actorAbilities,
     actorAbilityTargets,
+    authoredSceneEventKeys,
 };
 
-static_assert(static_cast<std::uint32_t>(SectionIndex::actorAbilityTargets) + 1 == kSectionCount);
+static_assert(static_cast<std::uint32_t>(SectionIndex::authoredSceneEventKeys) + 1
+              == kSectionCount);
 
 /** Exact activity-name/root join result retained for every activity row. */
 enum class ActivityJoinStatus : std::uint32_t {
@@ -1099,6 +1177,7 @@ struct SquadMember final {
     std::uint32_t flags{};
     std::array<std::uint16_t, kSquadCandidateCountLaneCount> candidateCounts{};
     std::int32_t defaultCount{-1};
+    std::array<std::int8_t, 4> authoredSpawnProfile{};
 };
 
 /** One exact authored anchor retains its placed-entry identity and raw position bits. */
@@ -1122,6 +1201,20 @@ struct AuthoredSceneResource final {
     std::uint32_t resourceFieldOffset{};
     std::uint32_t resourceTag{};
     std::uint32_t resourceClass{};
+    std::uint32_t flags{};
+    std::uint32_t reserved{};
+};
+
+/** One event gate of a type-43 scene's graph, in the scene's gate order. */
+struct AuthoredSceneEventKey final {
+    StringRef id{};
+    std::uint32_t sceneSlotIndex{};
+    std::uint32_t resourceTag{};
+    std::uint32_t graphTag{};
+    /** Offset of the gate element inside the graph, the row's provenance. */
+    std::uint32_t gateOffset{};
+    std::int32_t ordinal{};
+    std::uint32_t key{};
     std::uint32_t flags{};
     std::uint32_t reserved{};
 };
@@ -1201,7 +1294,7 @@ struct DialogueCueText final {
     std::uint32_t stringHash{};
 };
 
-/** One bounded authored type-68 HUD element with its exact title and description fields. */
+/** One bounded authored type-68 HUD element; an absent field is empty with zero source tags. */
 struct DirectiveElement final {
     StringRef id{};
     StringRef title{};
@@ -1214,6 +1307,10 @@ struct DirectiveElement final {
     std::uint32_t titleStringHash{};
     std::uint32_t descriptionContainerTag{};
     std::uint32_t descriptionStringHash{};
+    StringRef progress{};
+    std::uint32_t progressContainerTag{};
+    std::uint32_t progressStringHash{};
+    std::uint32_t flags{};
 };
 
 /** One installed compiled behavior root and its complete local channel-edge ranges. */
@@ -1508,6 +1605,7 @@ static_assert(sizeof(Squad) == kSquadSize);
 static_assert(sizeof(SquadMember) == kSquadMemberSize);
 static_assert(sizeof(SquadAnchor) == kSquadAnchorSize);
 static_assert(sizeof(AuthoredSceneResource) == kAuthoredSceneResourceSize);
+static_assert(sizeof(AuthoredSceneEventKey) == kAuthoredSceneEventKeySize);
 static_assert(sizeof(AuthoredSceneSquadEdge) == kAuthoredSceneSquadEdgeSize);
 static_assert(sizeof(TaskTarget) == kTaskTargetSize);
 static_assert(sizeof(DialogueCueText) == kDialogueCueTextSize);
@@ -1781,6 +1879,8 @@ static_assert(offsetof(SquadMember, actorClassIndex) == offset::kSquadMemberActo
 static_assert(offsetof(SquadMember, flags) == offset::kSquadMemberFlags);
 static_assert(offsetof(SquadMember, candidateCounts) == offset::kSquadMemberCandidateCounts);
 static_assert(offsetof(SquadMember, defaultCount) == offset::kSquadMemberDefaultCount);
+static_assert(offsetof(SquadMember, authoredSpawnProfile)
+              == offset::kSquadMemberAuthoredSpawnProfile);
 static_assert(offsetof(SquadAnchor, id) == offset::kSquadAnchorId);
 static_assert(offsetof(SquadAnchor, squadIndex) == offset::kSquadAnchorSquadIndex);
 static_assert(offsetof(SquadAnchor, pointOrdinal) == offset::kSquadAnchorPointOrdinal);

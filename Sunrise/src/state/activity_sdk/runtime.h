@@ -248,6 +248,8 @@ public:
     actor_sequence_entries() const noexcept;
     [[nodiscard]] std::span<const format::ActorSequenceBinding>
     actor_sequence_bindings() const noexcept;
+    [[nodiscard]] std::span<const format::AuthoredSceneEventKey>
+    authored_scene_event_keys() const noexcept;
 
 private:
     friend bool load(void* module,
@@ -277,6 +279,9 @@ private:
 };
 
 using Snapshot = std::shared_ptr<const Catalog>;
+
+/** Equal validated content may retain borrowed rows even when its file mapping was reopened. */
+[[nodiscard]] bool same_identity(const Snapshot& left, const Snapshot& right) noexcept;
 
 /** Selection state is captured while the caller owns its ActivityClient lock. */
 struct Selection final {
@@ -509,6 +514,9 @@ slot_authored_scene_resources(const Catalog& catalog, const format::Slot& slot) 
 /** Returns all exact same-object squad edges owned by one type-43 slot. */
 [[nodiscard]] std::span<const format::AuthoredSceneSquadEdge>
 slot_authored_scene_squad_edges(const Catalog& catalog, const format::Slot& slot) noexcept;
+/** Returns every HUD element of one type-68 slot, in name hash then element order. */
+[[nodiscard]] std::span<const format::DirectiveElement>
+slot_directive_elements(const Catalog& catalog, const format::Slot& slot) noexcept;
 /** Resolves one validated scene edge to its exact type-1 target slot. */
 [[nodiscard]] const format::Slot*
 authored_scene_linked_squad_slot(const Catalog& catalog,
