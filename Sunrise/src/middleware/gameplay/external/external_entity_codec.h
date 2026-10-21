@@ -68,6 +68,7 @@ struct TypePayload {
     std::array<std::byte, kTypePayloadStateCapacity> state{};
     std::uint16_t byteCount{};
     state::gameplay::entity_identity::ActorSourceReference actorSource{};
+    state::gameplay::entity_identity::DamagePools damage{};
 };
 
 /** One generic channel-2 record and its callback-owned type state. */

@@ -1,5 +1,6 @@
 /** Read-only views of the activity link a binding owns, taken under the session lock. */
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <shared_mutex>
@@ -7,6 +8,7 @@
 #include "../../state/account/account_context.h"
 #include "../../state/activity/member_context.h"
 #include "../../state/activity/runtime.h"
+#include "../../state/activity/transactions/internal.h"
 #include "encrypted/push/activity/internal.h"
 #include "internal.h"
 #include "runtime.h"
@@ -104,6 +106,17 @@ bool activity_link_view(const state::activity::SessionBinding& binding,
     return session != nullptr;
 }
 
+bool mission_activity_link_view(const state::activity::SessionBinding& binding,
+                                ActivityLinkView& output) noexcept {
+    output = {};
+    const std::shared_lock lock(session_lock());
+    const Session* const session = mission_activity_link_locked(binding, output.matchingLinks);
+    if (session != nullptr) {
+        fill_link_view(*session, output);
+    }
+    return session != nullptr;
+}
+
 bool activity_link_view(const state::activity::SessionBinding& binding,
                         std::uint64_t generation,
                         ActivityLinkView& output) noexcept {
@@ -115,6 +128,39 @@ bool activity_link_view(const state::activity::SessionBinding& binding,
         fill_link_view(*session, output);
     }
     return session != nullptr;
+}
+
+bool mission_member_link_view(const state::activity::SessionBinding& binding,
+                              const state::activity::membership::Identity& identity,
+                              ActivityLinkView& output) noexcept {
+    output = {};
+    if (!identity.memberKey || !identity.accountSoid || !identity.opaqueSoid) {
+        return false;
+    }
+    const std::shared_lock lock(session_lock());
+    const Session* selected = nullptr;
+    for (const auto& session : sessions()) {
+        if (!session.id || !session.authenticated || !session.activity.bindingGeneration
+            || session.activity.role == ActivityClientRole::none
+            || !state::activity::same_binding(session.activity.session, binding)
+            || !state::activity::transactions::same_destination(
+                session.activity.session.destination, binding.destination)
+            || session.activityMemberKey != identity.memberKey
+            || state::account_primary_soid(session.accountHandle) != identity.accountSoid
+            || session.activityCharacterSoid != identity.opaqueSoid) {
+            continue;
+        }
+        if (selected) {
+            return false;
+        }
+        selected = &session;
+    }
+    if (!selected) {
+        return false;
+    }
+    fill_link_view(*selected, output);
+    output.matchingLinks = 1;
+    return output.joined;
 }
 
 bool activity_link_view_for_member(const state::activity::SessionBinding& binding,
@@ -273,6 +319,15 @@ bool activity_replication_view_for_group(std::uint64_t groupSessionId,
 }
 
 namespace {
+/** Both native lanes name the same complete carrier, including its port and identity bytes. */
+bool owns_address(
+    const Session& session,
+    const std::array<std::byte, middleware::gameplay::descriptor::kNetAddrSize>& address) noexcept {
+    return (session.activityTransport.hasAddress && session.activityTransport.address == address)
+           || (session.activityTransport.hasAlternate
+               && session.activityTransport.alternate == address);
+}
+
 bool owned_replication_view(std::uint64_t id,
                             bool group,
                             std::uint64_t accountSoid,
@@ -307,6 +362,48 @@ bool owned_replication_view(std::uint64_t id,
     return true;
 }
 } // namespace
+
+bool activity_replication_view_for_address(
+    std::uint64_t id,
+    const std::array<std::byte, middleware::gameplay::descriptor::kNetAddrSize>& address,
+    ActivityReplicationView& output) noexcept {
+    output = {};
+    if (!id || std::all_of(address.begin(), address.end(), [](std::byte value) {
+            return value == std::byte{};
+        })) {
+        return false;
+    }
+    const std::shared_lock lock(session_lock());
+    const Session* selected = nullptr;
+    for (const Session& session : sessions()) {
+        if (!session.id || !session.authenticated
+            || session.activity.role != ActivityClientRole::privateCurrent
+            || session.activity.session.sessionId != id || !session.activity.bindingGeneration
+            || session.activityJoinGeneration != session.activity.bindingGeneration
+            || !session.activityPatchEpoch.seen
+            || session.activityPatchEpoch.bindingGeneration != session.activity.bindingGeneration
+            || !session.activityMemberKey || !session.activityCharacterSoid
+            || !state::account_primary_soid(session.accountHandle)
+            || !state::activity::binding_matches(session.activity.session)
+            || !owns_address(session, address)) {
+            continue;
+        }
+        if (selected != nullptr) {
+            return false;
+        }
+        selected = &session;
+    }
+    if (selected == nullptr) {
+        return false;
+    }
+    output.binding = selected->activity.session;
+    output.patchEpoch = selected->activityPatchEpoch.value;
+    output.activityClientGeneration = selected->activity.bindingGeneration;
+    output.groupSessionId = selected->activity.groupSessionId;
+    output.memberId = selected->activityMemberKey;
+    output.replicationEpoch = selected->activity.replicationEpoch;
+    return true;
+}
 
 bool activity_replication_view_for_session(std::uint64_t id,
                                            std::uint64_t accountSoid,

@@ -30,6 +30,7 @@
 #include "activity_notification_frame.h"
 #include "activity_roster_push.h"
 #include "internal.h"
+#include "mission_entity_allocation.h"
 
 namespace sunrise::server::bap::encrypted::push::activity {
 namespace {
@@ -105,10 +106,7 @@ constexpr std::uint32_t kCurrentRevision = 0;
     server::gameplay::entity_identities::PublicationLease entityLease;
     if (!published || framedSize == 0 || framedSize > response.size()
         || !begin_staged_roster_publication(session, entityLease)
-        || (session.activityRosterStaged.staged
-            && session.activityRosterStaged.entityRetirement.pending
-            && !state::activity::advance_replication_sequence(
-                session.activity.session, session.activityRosterStaged.retirementSequence))) {
+        || !commit_mission_entity_allocation(session)) {
         // Nothing left, so a roster staged into the discarded body is offered again next push.
         discard_staged_roster(session);
         discard_staged_advertisement(session);
@@ -336,10 +334,14 @@ bool consume_activity_keepalive(Session& session,
                             && retirement.pending;
         }
     }
+    const bool missionAllocationDue =
+        active && session.activityPatchEpoch.seen
+        && session.activityPatchEpoch.bindingGeneration == session.activity.bindingGeneration
+        && mission_entity_allocation_owed(session, false);
     if (!active
         || (!keepaliveDue && !regionChanged && !hostStateDue && !scriptableDue && !incidentDue
             && !authorityResetDue && !authorityQueryDue && !hostTeleportDue && !retirementDue
-            && !arrivalDue && !membershipDue)) {
+            && !arrivalDue && !membershipDue && !missionAllocationDue)) {
         return false;
     }
     touchesScratch = true;
@@ -354,7 +356,7 @@ bool consume_activity_keepalive(Session& session,
     // Only a changed Host value, retirement or the arrival answer can publish a standalone roster.
     if (!keepaliveDue && !regionChanged && !hostTeleportDue && !membershipDue) {
         bool appendedRoster = false;
-        if (hostStateDue || scriptableDue || retirementDue || arrivalDue) {
+        if (hostStateDue || scriptableDue || retirementDue || arrivalDue || missionAllocationDue) {
             appendedRoster = append_roster_notification(
                 session, scratch, key, nextSendNonce, scratch.framed, framedSize);
             published = appendedRoster;
@@ -641,7 +643,8 @@ bool consume_activity_keepalive(Session& session,
     const bool deferredMembership = commitsMembership && !appendedMembership;
     if (framedSize > response.size()
         || (commitsMembership && appendedMembership
-            && !state::activity::membership::commit(stagedMembership))) {
+            && (!state::activity::membership::commit(stagedMembership)
+                || !refresh_mission_entity_allocation(session)))) {
         SecureZeroMemory(&stagedMembership, sizeof stagedMembership);
         discard_staged_roster(session);
         discard_staged_advertisement(session);

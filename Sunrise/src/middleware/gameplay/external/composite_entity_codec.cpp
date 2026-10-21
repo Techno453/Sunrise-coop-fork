@@ -79,6 +79,8 @@ read_schema(const void* raw, std::uint32_t rowIndex, wire::runtime::SchemaView& 
            && output.row == rowIndex;
 }
 
+static std::uint8_t canonical_type(const void*, std::uint8_t) noexcept;
+
 /** Converts one SDK field row into the generic runtime walker view. */
 [[nodiscard]] bool
 read_field(const void* raw, std::uint32_t rowIndex, wire::runtime::FieldView& output) noexcept {
@@ -101,16 +103,7 @@ read_field(const void* raw, std::uint32_t rowIndex, wire::runtime::FieldView& ou
             }
             output.nestedSchemaRow = target.row;
         }
-        if ((context->family != format::RuntimeCodecFamily::sobjectModeZero
-             && output.typeCode == 30)
-            || (context->family == format::RuntimeCodecFamily::sobjectModeOne
-                && output.typeCode == 20)) {
-            output.typeCode = 18;
-        }
-        if (context->family == format::RuntimeCodecFamily::sobjectModeOne
-            && output.typeCode == 29) {
-            output.typeCode = 43;
-        }
+        output.typeCode = canonical_type(raw, output.typeCode);
         return true;
     }
     const format::RuntimeField& row = context->catalog->runtimeFields[rowIndex];
@@ -161,14 +154,7 @@ read_field(const void* raw, std::uint32_t rowIndex, wire::runtime::FieldView& ou
                                     ? 0
                                     : static_cast<std::int32_t>(row.bits);
     output.typeCode = static_cast<std::uint8_t>(row.typeCode);
-    if ((context->family != format::RuntimeCodecFamily::sobjectModeZero && output.typeCode == 30)
-        || (context->family == format::RuntimeCodecFamily::sobjectModeOne
-            && output.typeCode == 20)) {
-        output.typeCode = 18;
-    }
-    if (context->family == format::RuntimeCodecFamily::sobjectModeOne && output.typeCode == 29) {
-        output.typeCode = 43;
-    }
+    output.typeCode = canonical_type(raw, output.typeCode);
     output.presence =
         static_cast<std::uint8_t>((row.flags & format::kRuntimeFieldPresenceBit) != 0);
     output.parameter2 = static_cast<std::uint8_t>(
@@ -207,6 +193,10 @@ read_field(const void* raw, std::uint32_t rowIndex, wire::runtime::FieldView& ou
         }
         match = &row;
     }
+    if (typeCode == 1 && match != nullptr) {
+        // Table entry 1 is a no-op; ordinary nested fields bypass this callback.
+        return (match->flags & format::kRuntimeTypeDefinitionExact) != 0;
+    }
     return match != nullptr && (match->flags & format::kRuntimeTypeDefinitionExact) != 0
            && (match->flags & format::kRuntimeTypeUnsupported) != 0 && match->fixedBits == 0
            && match->minimumBits == 0 && match->maximumBits == 0 && match->reserved == 0;
@@ -233,8 +223,21 @@ static std::uint8_t canonical_type(const void* raw, std::uint8_t type) noexcept 
         return 18;
     }
     if (context.family == format::RuntimeCodecFamily::sobjectModeOne) {
-        if (type == 20) {
+        // Raw-64 type 12 has the explicit 64-bit raw representation of type 35.
+        if (type == 12) {
+            return 35;
+        }
+        // Mode-one entity references include type 31 beside type 20.
+        if (type == 20 || type == 31) {
             return 18;
+        }
+        // Nullable type 21 has the explicit nullable schema-reference representation of type 23.
+        if (type == 21) {
+            return 23;
+        }
+        // Types 26 and 27 share the nullable-record body.
+        if (type == 27) {
+            return 26;
         }
         if (type == 29) {
             return 43;
@@ -266,6 +269,18 @@ resolve_command_payload(const void* raw, std::uint8_t selector, std::uint32_t& o
     return found;
 }
 
+/**
+ * Build 86657 mode one reads type 37 as the 808092FF schema, whose 19-bit real and 5-bit
+ * biased integer occupy 24 bits. Other families leave type 37 unsupported.
+ */
+static std::uint32_t custom_schema(const void* raw, std::uint8_t type) noexcept {
+    const auto& context = *static_cast<const detail::ResolverContext*>(raw);
+    return context.family == format::RuntimeCodecFamily::sobjectModeOne
+                   && type == wire::kRuntimeCustomSchemaType
+               ? 0x808092FFU
+               : 0;
+}
+
 /** Builds borrowed reflection callbacks over one stable resolver context. */
 [[nodiscard]] wire::RuntimeSchemaResolver make_resolver(detail::ResolverContext& context) noexcept {
     wire::RuntimeSchemaResolver resolver{};
@@ -279,6 +294,7 @@ resolve_command_payload(const void* raw, std::uint8_t selector, std::uint32_t& o
     resolver.recordPresence = context.presence.empty() ? nullptr : record_presence;
     resolver.firstFieldBit = context.firstFieldBit;
     resolver.canonicalType = canonical_type;
+    resolver.customSchema = custom_schema;
     resolver.nativeCommandEmptyShortcut =
         context.family == format::RuntimeCodecFamily::sobjectModeOne;
     resolver.resolveCommandPayload = resolve_command_payload;
@@ -531,6 +547,27 @@ runtime_schema(const CompositeEntityCodecContext& context, std::uint32_t handle)
             return false;
         }
         *semanticTag = tag;
+    }
+    if (resolverContext.componentTag == kCombatantDamageComponentPlan
+        && schemaHandle == kCombatantDamagePoolSchema
+        && resolverContext.damagePool < mirror.damage.levels.size()) {
+        // Use the compiled plan's pool position, never the count of present values.
+        // An omitted health pool must not turn a shield update into health.
+        for (const auto& value : std::span(values).first(result.valueCount)) {
+            if (value.schemaHandle != schemaHandle || !value.present
+                || value.role != wire::ValueRole::opaqueScalarCode) {
+                continue;
+            }
+            const auto pool = resolverContext.damagePool;
+            if (value.occurrence != 0
+                || value.width != state::gameplay::entity_identity::kDamagePoolLevelBits
+                || value.unsignedValue > state::gameplay::entity_identity::kDamagePoolLevelMaximum
+                || mirror.damage.present[pool]) {
+                return false;
+            }
+            mirror.damage.levels[pool] = static_cast<std::uint16_t>(value.unsignedValue);
+            mirror.damage.present[pool] = true;
+        }
     }
     if (resolverContext.componentTag == 0x80C70EDCU && schemaHandle == 0x80C70EDCU) {
         wire::runtime::SchemaView component{}, source{}, reference{};
