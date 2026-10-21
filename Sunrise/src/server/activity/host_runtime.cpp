@@ -582,6 +582,8 @@ bool auth_state(const state::activity::SessionBinding& binding, AuthState& outpu
     const bool found = instance != nullptr;
     if (found) {
         output.revision = instance->view.stateRevision;
+        output.estateRevision = instance->view.scriptableEstateRevision;
+        output.dialogueRevision = instance->view.dialogueRevision;
         output.lifetimeState = instance->view.lifetimeState;
     }
     ReleaseSRWLockShared(&g_lock);
