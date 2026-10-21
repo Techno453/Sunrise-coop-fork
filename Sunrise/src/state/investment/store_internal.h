@@ -1,7 +1,9 @@
 #pragma once
 
+#include <array>
 #include <bit>
 #include <cmath>
+#include <cstring>
 #include <limits>
 #include <mutex>
 #include <sqlite3.h>
@@ -13,6 +15,11 @@
 
 namespace sunrise::state::investment::store {
 
+/** True for a fixed-size byte array, the only shape this store binds as a BLOB. */
+template <typename T> inline constexpr bool kIsByteArray = false;
+template <std::size_t N>
+inline constexpr bool kIsByteArray<std::array<std::uint8_t, N>> = true;
+
 extern sqlite3* g_database;
 extern std::recursive_mutex g_mutex;
 extern std::uint64_t g_failureSerial;
@@ -22,6 +29,8 @@ struct Session {
     std::array<bool, kCharacterCapacity> selected{};
     std::array<std::uint16_t, kCharacterCapacity> activities{};
     std::uint64_t signInSeconds{};
+    /** Set while an earned-perk walk is owed; a rolled-back transaction restores it. */
+    bool perkWalkOwed{true};
 };
 extern Session g_session;
 
@@ -62,7 +71,14 @@ public:
         if (!local_account_access() || statement_ == nullptr) {
             return false;
         }
-        if constexpr (std::is_enum_v<T>) {
+        if constexpr (kIsByteArray<T>) {
+            if (sqlite3_column_type(statement_, index) != SQLITE_BLOB
+                || static_cast<std::size_t>(sqlite3_column_bytes(statement_, index))
+                       != value.size()) {
+                return false;
+            }
+            std::memcpy(value.data(), sqlite3_column_blob(statement_, index), value.size());
+        } else if constexpr (std::is_enum_v<T>) {
             std::underlying_type_t<T> raw{};
             if (!column(index, raw)) {
                 return false;
@@ -114,8 +130,12 @@ public:
 
 private:
     /** SQL integers preserve all 64 identity bits; text bindings copy their input. */
-    template <typename T> [[nodiscard]] bool bind(int index, T value) noexcept {
-        if constexpr (std::is_convertible_v<T, std::string_view>) {
+    template <typename T> [[nodiscard]] bool bind(int index, const T& value) noexcept {
+        if constexpr (kIsByteArray<T>) {
+            return sqlite3_bind_blob64(
+                       statement_, index, value.data(), value.size(), copy_text())
+                   == SQLITE_OK;
+        } else if constexpr (std::is_convertible_v<T, std::string_view>) {
             const std::string_view textValue(value);
             return sqlite3_bind_text64(statement_,
                                        index,

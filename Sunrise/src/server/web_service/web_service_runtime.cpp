@@ -14,6 +14,7 @@
 #include "../../middleware/web_service/messages/opcode206.h"
 #include "../../middleware/web_service/messages/opcode2400.h"
 #include "../../middleware/web_service/messages/opcode501_codec.h"
+#include "../../middleware/web_service/messages/opcode502.h"
 #include "../../middleware/web_service/messages/opcode503.h"
 #include "../../middleware/web_service/messages/opcode504.h"
 #include "../../middleware/web_service/messages/opcode601/opcode601_codec.h"
@@ -246,13 +247,44 @@ bool encode_resident_dependent_refusal(std::span<const std::byte> request,
 }
 
 /**
+ * Encodes the reply to an opcode-501 create or 502 delete, a refusal when nothing changed.
+ * @param message Parsed request; its opcode picks the reply shape.
+ * @param family4Version Revision carrying the change, or kNoFamily4Publication.
+ * @param outcome The roster change and created id, empty for a refusal.
+ * @param response Svc-11 response-body storage owned by the caller.
+ * @param written Gets the encoded response-body size.
+ * @return False when the reply does not fit.
+ */
+bool encode_roster_reply(const middleware::web_service::Message& message,
+                         std::int32_t family4Version,
+                         const Outcome& outcome,
+                         std::span<std::byte> response,
+                         std::size_t& written) noexcept {
+    namespace ws = middleware::web_service;
+    ws::StatusResponse status{};
+    status.value = family4Version;
+    if (!outcome.hasRosterChange) {
+        // A refusal stages nothing, so the version wait must not wait.
+        status.code = kRefusedStatus;
+        status.value = ws::kNoFamily4Publication;
+    }
+    if (message.opcode == ws::messages::opcode501::kOpcode) {
+        // The 501 shape always carries the id field, zero on a refusal.
+        return ws::messages::opcode501::encode_response(
+            message, status, outcome.createdCharacterSoid, response, written);
+    }
+    return ws::encode_response(message, ws::ResponseShape::statusPair, status, response, written);
+}
+
+/**
  * Parses one request, prepares any action it names, and encodes the reply that reports it.
  * @param request Whole decrypted svc-10 body.
  * @param response Svc-11 response-body storage owned by the caller.
  * @param written Gets the encoded response-body size, or zero when the header does not parse.
  * @param outcome Gets the prepared action for the caller to publish, and is left empty when
  * the action was refused or the reply could not be encoded.
- * @return False only when the envelope header does not parse.
+ * @return False when the envelope header does not parse, or a saved roster change has no
+ *         reply; the caller's save transaction must then drop the change.
  */
 bool consume(std::span<const std::byte> request,
              std::span<std::byte> response,
@@ -302,13 +334,23 @@ bool consume(std::span<const std::byte> request,
         return true;
     }
 
-    if (message.opcode == middleware::web_service::messages::opcode501::kOpcode) {
-        // Returns a SOID family three already publishes. The request body is not parsed.
-        const std::uint64_t characterSoid =
-            state::account::selected_character_soid(state::bound_account_snapshot());
-        return middleware::web_service::messages::opcode501::encode_response(
-                   message, characterSoid, response, written)
-               || encode_echo(message, response, written);
+    if (message.opcode == middleware::web_service::messages::opcode501::kOpcode
+        || message.opcode == middleware::web_service::messages::opcode502::kOpcode) {
+        if (message.opcode == middleware::web_service::messages::opcode501::kOpcode) {
+            create_character(message, outcome);
+        } else {
+            delete_character(message, outcome);
+        }
+        // The caller re-encodes a change with the revision that publishes it.
+        if (encode_roster_reply(message,
+                                middleware::web_service::kNoFamily4Publication,
+                                outcome,
+                                response,
+                                written)) {
+            return true;
+        }
+        // A saved change must not outlive a missing reply; false makes the caller drop it.
+        return !outcome.hasRosterChange && encode_echo(message, response, written);
     }
 
     // The artifact vendor is answered here. Every other vendor purchase falls through to the

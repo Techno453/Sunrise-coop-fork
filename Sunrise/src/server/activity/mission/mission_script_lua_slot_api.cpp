@@ -7,6 +7,7 @@
 
 #include "../../../middleware/bap/activity_message/auth_fields.h"
 #include "../../../middleware/bap/activity_message/auth_schema_catalog.h"
+#include "../../../middleware/bap/activity_message/volume_toggle_auth.h"
 #include "mission_script_lua_dispatch.h"
 #include "mission_script_lua_internal.h"
 
@@ -103,6 +104,56 @@ namespace auth_catalog = middleware::bap::activity_message::auth_schema_catalog;
 }
 
 namespace {
+
+constexpr const api::MemberSpec& kVolumeActive = api::slot_member("set_volume_active");
+
+/** Reads one required boolean argument; any other type is an error. */
+[[nodiscard]] bool required_boolean(lua_State* state, const char* name) {
+    lua_getfield(state, 2, name);
+    if (!lua_isboolean(state, -1)) {
+        luaL_error(state, "%s must be a boolean", name);
+    }
+    const bool value = lua_toboolean(state, -1) != 0;
+    lua_pop(state, 1);
+    return value;
+}
+
+/** Turns one authored type-60 volume of the same object on or off through its type-32 toggle. */
+[[nodiscard]] int slot_set_volume_active(lua_State* state) {
+    const auto* const handle =
+        static_cast<const SlotHandle*>(luaL_checkudata(state, 1, kSlotMetatable));
+    refuse_unknown_arguments(state, kVolumeActive);
+    const SlotHandle target = checked_argument<SlotHandle>(
+        state, required_key(kVolumeActive, "volume", api::ValueKind::handle), kSlotMetatable);
+    const bool active =
+        required_boolean(state, required_key(kVolumeActive, "active", api::ValueKind::boolean));
+    SlotDefinition source{}, volume{};
+    if (!current_slot(state, *handle, source) || !current_slot(state, target, volume)) {
+        return luaL_error(state, "toggle or volume is stale or invalid");
+    }
+    if (source.slotType != scriptable_auth::kType32SlotType
+        || source.componentClass != scriptable_auth::kType32ComponentClass
+        || source.authSchema != scriptable_auth::kType32Schema
+        || (source.flags & format::kSlotSchemaJoinExact) == 0) {
+        return luaL_error(state, "source must be an exact type-32 toggle sensor");
+    }
+    if (volume.slotType != scriptable_auth::kVolumeSlotType || volume.objectTag != source.objectTag
+        || volume.registryKey != source.registryKey
+        || volume.slotIndex
+               > static_cast<std::uint32_t>((std::numeric_limits<std::int16_t>::max)())) {
+        return luaL_error(state, "volume must be a same-owner type-60 slot");
+    }
+    std::array<std::byte, scriptable_auth::kType32ByteCount> body{};
+    std::size_t written = 0;
+    if (!scriptable_auth::encode_type32_volume(
+            {volume.registryKey, static_cast<std::int16_t>(volume.slotIndex), active},
+            body,
+            written)) {
+        return luaL_error(state, "native toggle encoder rejected the volume");
+    }
+    return queue_slot_auth(
+        state, source, scriptable_auth::kType32Schema, scriptable_auth::kType32BitCount, body);
+}
 
 /** Pushes one property of the slot's Auth catalog entry, or nil when it has none. */
 template <typename Push> void push_auth(lua_State* state, const SlotDefinition& slot, Push push) {
@@ -220,6 +271,7 @@ constexpr std::array<SlotBinding, std::size(api::kSlotMembers)> kSlotBindings{{
      nullptr,
      [](lua_State* state, const SlotDefinition& slot) { lua_pushinteger(state, slot.flags); }},
     {"set_object_filter", &slot_set_object_filter},
+    {"set_volume_active", &slot_set_volume_active},
     {"watch_damage", &slot_watch_damage},
     {"set_object_active", &slot_set_object_active},
     {"set_channel", &slot_set_channel},

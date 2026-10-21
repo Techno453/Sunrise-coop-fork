@@ -11,6 +11,7 @@
 #include <variant>
 
 #include "../../middleware/web_service/messages/opcode206.h"
+#include "../../middleware/web_service/web_service_envelope.h"
 #include "../../state/account/inventory/seen_state.h"
 #include "../../state/runtime/runtime.h"
 
@@ -29,6 +30,10 @@ struct Outcome {
     /** An opcode-504 pick was recorded and its Family-4 update still has to follow. */
     bool hasSelectedCharacter{};
     std::uint64_t selectedCharacterSoid{};
+    /** An opcode-501 create or 502 delete saved a roster change; the account resync follows. */
+    bool hasRosterChange{};
+    /** The character an opcode-501 create added, which its reply names. */
+    std::uint64_t createdCharacterSoid{};
     /** Reset is precommitted because it changes persistence and account currency together. */
     bool hasArtifactReset{};
     state::ArtifactResetResult artifactReset{};
@@ -112,7 +117,8 @@ inline void clear_mutation(Outcome& outcome) noexcept {
  * @param written Gets the encoded response-body size, or zero when the header does not parse.
  * @param outcome Gets the prepared action for the caller to publish, and is left empty when
  * the action was refused or the reply could not be encoded.
- * @return False only when the envelope header does not parse.
+ * @return False when the envelope header does not parse, or a saved roster change has no
+ *         reply; the caller's save transaction must then drop the change.
  */
 [[nodiscard]] bool
 consume(std::span<const std::byte> request,
@@ -120,6 +126,21 @@ consume(std::span<const std::byte> request,
         std::size_t& written,
         Outcome& outcome,
         std::span<const state::account::inventory::PresentedItemRow> presentation = {}) noexcept;
+
+/**
+ * Encodes the reply to an opcode-501 create or 502 delete, a refusal when nothing changed.
+ * @param message Parsed request; its opcode picks the reply shape.
+ * @param family4Version Revision carrying the change, or kNoFamily4Publication.
+ * @param outcome The roster change and created id, empty for a refusal.
+ * @param response Svc-11 response-body storage owned by the caller.
+ * @param written Gets the encoded response-body size.
+ * @return False when the reply does not fit.
+ */
+[[nodiscard]] bool encode_roster_reply(const middleware::web_service::Message& message,
+                                       std::int32_t family4Version,
+                                       const Outcome& outcome,
+                                       std::span<std::byte> response,
+                                       std::size_t& written) noexcept;
 
 /** Encodes the normal refusal shape for a request that may publish resident references. */
 [[nodiscard]] bool encode_resident_dependent_refusal(std::span<const std::byte> request,

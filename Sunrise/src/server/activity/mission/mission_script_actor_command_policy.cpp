@@ -36,8 +36,7 @@ ActorCommandPolicy g_actorCommandPolicy{};
     }
     const auto squads = published->squads();
     if (intent.firstRow >= squads.size()
-        || (squads[intent.firstRow].flags & format::kSquadRunnableMask)
-               != format::kSquadRunnableMask) {
+        || !format::squad_runnable(squads[intent.firstRow].flags)) {
         return ActorCommandPolicyStatus::refused;
     }
     const auto commands = published->actor_command_definitions();

@@ -10,6 +10,7 @@
 #include "../../../middleware/bap/activity_message/music_section_auth.h"
 #include "../../../middleware/bap/activity_message/scriptable_auth_body.h"
 #include "../../../middleware/bap/activity_message/squad_objective_auth.h"
+#include "../../../middleware/bap/activity_message/volume_toggle_auth.h"
 #include "../../../state/activity/mission/definition.h"
 #include "../../../state/activity_sdk/format.h"
 #include "mission_api_types.h"
@@ -58,6 +59,8 @@ inline constexpr ValueSpec kAuthType[]{{.kind = ValueKind::string,
 // --- Slot method arguments ----------------------------------------------------------------------
 inline constexpr ValueSpec kVolume[]{
     {.kind = ValueKind::handle, .ref = "slot", .slot = type_gate(slot_auth::kType60SlotType)}};
+inline constexpr ValueSpec kFilterObject[]{
+    {.kind = ValueKind::handle, .ref = "slot", .slot = type_gate(slot_format::kObjectSlotType)}};
 inline constexpr ValueSpec kObjectFilterArguments[]{
     {.name = "players",
      .kind = ValueKind::boolean,
@@ -70,6 +73,18 @@ inline constexpr ValueSpec kObjectFilterArguments[]{
      .optional = true,
      .slot = type_gate(slot_format::kObjectSlotType),
      .note = "adds a test: this one object"},
+    {.name = "targets",
+     .kind = ValueKind::list,
+     .optional = true,
+     .bound = between(1, static_cast<std::int64_t>(slot_auth::kType34PredicateCapacity)),
+     .element = kFilterObject,
+     .note = "adds one test per object"},
+    {.name = "squad",
+     .kind = ValueKind::handle,
+     .ref = "slot",
+     .optional = true,
+     .slot = type_gate(slot_format::kSquadSlotType),
+     .note = "adds a test: this squad"},
     {.name = "inside",
      .kind = ValueKind::handle,
      .ref = "slot",
@@ -82,6 +97,15 @@ inline constexpr ValueSpec kObjectFilterArguments[]{
      .bound = between(1, 5),
      .element = kVolume,
      .note = "adds a test: objects inside any of these volumes"},
+};
+inline constexpr ValueSpec kVolumeActiveArguments[]{
+    {.name = "volume",
+     .kind = ValueKind::handle,
+     .ref = "slot",
+     .slot = type_gate(slot_auth::kVolumeSlotType),
+     .scope = Scope::sameObject,
+     .note = "an authored volume of the toggle's own object"},
+    {.name = "active", .kind = ValueKind::boolean, .note = "true turns it on, false off"},
 };
 inline constexpr ValueSpec kWatchDamageArguments[]{
     {.name = "target", .kind = ValueKind::handle, .ref = "slot", .slot = kExactObject},
@@ -433,7 +457,15 @@ inline constexpr MemberSpec kSlotMembers[]{
      .call = CallForm::named,
      .gate = schema_gate(slot_auth::kType34SlotType),
      .arguments = kObjectFilterArguments,
-     .returns = kRequestKey},
+     .returns = kRequestKey,
+     .note = "all tests share eight predicates; a filter that needs more is refused"},
+    {.name = "set_volume_active",
+     .kind = MemberKind::request,
+     .call = CallForm::named,
+     .gate = exact_class_gate(slot_auth::kType32SlotType),
+     .arguments = kVolumeActiveArguments,
+     .returns = kRequestKey,
+     .note = "turns one authored volume on or off through its type-32 toggle"},
     {.name = "watch_damage",
      .kind = MemberKind::request,
      .call = CallForm::named,

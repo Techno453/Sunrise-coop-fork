@@ -50,6 +50,7 @@ bool render_contract_files(const Source& source, Bundle& output) noexcept {
                  {"actor_sequence_entries", number(source.actorSequenceEntries.size())},
                  {"actor_sequence_bindings", number(source.actorSequenceBindings.size())},
                  {"authored_scene_event_keys", number(source.authoredSceneEventKeys.size())},
+                 {"dialogue_cues", number(source.dialogueCues.size())},
              })},
         });
         if (!render_json(manifest, 0, output.manifestJson)) {

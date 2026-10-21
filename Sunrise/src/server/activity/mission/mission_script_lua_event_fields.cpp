@@ -10,6 +10,7 @@
 #include "mission_script_lua_dispatch.h"
 #include "mission_script_lua_event_internal.h"
 #include "mission_script_lua_internal.h"
+#include "mission_trigger_observation.h"
 
 namespace sunrise::server::activity::mission::lua_vm::detail {
 namespace {
@@ -60,6 +61,16 @@ template <void (*Push)(lua_State*, const host::Event&)>
 void first_object_field(lua_State* state, const host::Event& event) {
     if (event.hasFirstObject) {
         Push(state, event);
+    } else {
+        lua_pushnil(state);
+    }
+}
+
+/** Pushes one flag only when its presence flag is set. */
+template <auto Field, auto Present>
+void present_boolean(lua_State* state, const host::Event& event) {
+    if (event.*Present) {
+        lua_pushboolean(state, event.*Field ? 1 : 0);
     } else {
         lua_pushnil(state);
     }
@@ -360,7 +371,6 @@ constexpr EventBinding kSquadAlive[]{
 constexpr EventBinding kSquadState[]{
     {"task_cost", &event_task_cost},
     {"task_group", &event_task_group},
-    {"removal_flag", nullptr, &boolean_field<&E::squadRemovalFlag>},
     {"slot_counts",
      nullptr,
      [](lua_State* state, const E& event) {
@@ -369,6 +379,20 @@ constexpr EventBinding kSquadState[]{
          for (std::size_t index = 0; index < count; ++index) {
              lua_pushinteger(state, event.squadSlotCounts[index]);
              lua_rawseti(state, -2, static_cast<lua_Integer>(index + 1));
+         }
+     }},
+    {"initial_observation", nullptr, &boolean_field<&E::initialObservation>},
+    {"population_available", nullptr, &boolean_field<&E::squadPopulationAvailable>},
+    {"objective_revision", nullptr, &integer_field<&E::squadObjectiveRevision>},
+    {"task_costs",
+     nullptr,
+     [](lua_State* state, const E& event) {
+         lua_createtable(state, static_cast<int>(host::kSquadObjectiveGroupCount), 0);
+         for (unsigned group = 0; group < host::kSquadObjectiveGroupCount; ++group) {
+             if ((event.squadObjectiveCostMask & (1U << group)) != 0) {
+                 lua_pushnumber(state, event.squadObjectiveCosts[group]);
+                 lua_rawseti(state, -2, static_cast<lua_Integer>(group) + 1);
+             }
          }
      }},
 };
@@ -503,6 +527,14 @@ constexpr EventBinding kObject[]{
              lua_pushnil(state);
          }
      }},
+    {"initial_observation", nullptr, &boolean_field<&E::initialObservation>},
+    {"entry_index", nullptr, &integer_field<&E::objectEntryIndex>},
+    {"spawn_mask_low",
+     nullptr,
+     [](lua_State* state, const E& event) { lua_pushinteger(state, event.objectSpawnMask[0]); }},
+    {"spawn_mask_high",
+     nullptr,
+     [](lua_State* state, const E& event) { lua_pushinteger(state, event.objectSpawnMask[1]); }},
 };
 constexpr EventBinding kGhostLink[]{
     {"generation", nullptr, &integer_field<&E::ghostGeneration>},
@@ -519,6 +551,33 @@ constexpr EventBinding kFireteam[]{
     {"alive_count", nullptr, &integer_field<&E::fireteamAlive>},
     {"dead_count", nullptr, &integer_field<&E::fireteamDead>},
     {"unknown_count", nullptr, &integer_field<&E::fireteamUnknown>},
+};
+// Copied from the exact Sense observation, never from an actor token.
+constexpr EventBinding kSenseGeneration[]{
+    {"spawn_generation",
+     nullptr,
+     &present_integer<&E::squadSpawnGeneration, &E::squadHasSpawnGeneration>},
+    {"sense_generation",
+     nullptr,
+     &present_integer<&E::senseGenerationPlusOne, &E::hasSenseGeneration>},
+};
+constexpr EventBinding kSquadRemoval[]{
+    {"removal_flag", nullptr, &boolean_field<&E::squadRemovalFlag>},
+};
+// An invalidation carries no level, so its level fields read nil.
+constexpr EventBinding kTriggerLevel[]{
+    {"available", nullptr, &boolean_field<&E::triggerAvailable>},
+    {"continuity",
+     nullptr,
+     [](lua_State* state, const E& event) {
+         lua_pushstring(state,
+                        trigger_observation::name(
+                            static_cast<trigger_observation::Continuity>(event.triggerContinuity)));
+     }},
+    {"occupied", nullptr, &present_boolean<&E::triggerOccupied, &E::triggerAvailable>},
+    {"member_count", nullptr, &present_integer<&E::triggerCount, &E::triggerAvailable>},
+    {"value", nullptr, &present_integer<&E::triggerValue, &E::triggerAvailable>},
+    {"all_inside", nullptr, &present_boolean<&E::triggerAll, &E::triggerAvailable>},
 };
 
 /** Every group's bindings, indexed by FieldGroupId. */
@@ -559,6 +618,9 @@ constexpr std::array<EventBindings, static_cast<std::size_t>(G::count)> kGroupBi
     kGhostLink,
     kSquadProvoked,
     kFireteam,
+    kSenseGeneration,
+    kSquadRemoval,
+    kTriggerLevel,
 }};
 static_assert([]() consteval {
     for (std::size_t index = 0; index < kGroupBindings.size(); ++index) {

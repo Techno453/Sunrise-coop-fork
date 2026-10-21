@@ -18,6 +18,10 @@ note_character_writeback(const middleware::web_service::Message& message,
                          Outcome& outcome) noexcept;
 
 void select_character(const middleware::web_service::Message& message, Outcome& outcome) noexcept;
+/** Saves the character an opcode-501 request describes, with its starter set. */
+void create_character(const middleware::web_service::Message& message, Outcome& outcome) noexcept;
+/** Removes the character an opcode-502 request names. */
+void delete_character(const middleware::web_service::Message& message, Outcome& outcome) noexcept;
 void mutate_equipment(const middleware::web_service::Message& message,
                       bool unequip,
                       Outcome& outcome) noexcept;

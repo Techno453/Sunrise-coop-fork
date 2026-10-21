@@ -21,6 +21,7 @@
 #include "../../../../../state/build_data/items/item_catalog.h"
 #include "../../../../../state/equipment/light/resolution/configured_equipment_light_resolver.h"
 #include "../../../../../state/runtime/runtime.h"
+#include "../../../../../state/unlocks/unlocks_records.h"
 #include "internal.h"
 #include "snapshot_storage.h"
 
@@ -190,12 +191,19 @@ bool prepare_social_roster(Scratch& scratch,
         } else if (character.currentActivityIndex <= (std::numeric_limits<std::int16_t>::max)()) {
             member.activityIndex = static_cast<std::int16_t>(character.currentActivityIndex);
         }
+        // Preserve the zero wire fallback when Power resolution fails.
         if (!state::equipment::light::resolution::character_light(account, i, member.light)) {
-            return report_failure("social_roster_light");
+            member.light = 0;
         }
     }
     member.groupKey = facts.groupKey;
     member.memberCount = facts.memberCount;
+    // The client reads the score as a signed 32-bit value; the store never publishes it negative.
+    // A remote account's scope cannot read private SQLite, so its score reads as zero.
+    const std::uint32_t storedScore = state::unlocks::records::score();
+    member.triumphScore = static_cast<std::int32_t>(
+        (std::min)(storedScore,
+                   static_cast<std::uint32_t>((std::numeric_limits<std::int32_t>::max)())));
 
     Prepared staged{};
     std::size_t objectCount = 0;
@@ -205,7 +213,8 @@ bool prepare_social_roster(Scratch& scratch,
     /**
      * Writes one object and stages it.
      * Both lookups match on the first qword, so the directory leads with the account soid and
-     * links its selected character at +8. That character owns the member record and its emblem.
+     * links its selected character at +8. That character owns the member record and its Power,
+     * emblem and Triumph score.
      */
     const auto emit = [&](std::size_t size, std::uint32_t id, bool directory) noexcept {
         if (objectCount >= staged.objects.size()) {
@@ -268,7 +277,7 @@ bool prepare_social_roster(Scratch& scratch,
                                       line.size(),
                                       "ev=queuez stage=social_roster result=ok soid=0x%016llX"
                                       " objects=%zu bytes=%zu emblem=%u hash=0x%08X"
-                                      " activity=%d prev=%d group=0x%08X",
+                                      " activity=%d prev=%d group=0x%08X power=%d score=%d",
                                       static_cast<unsigned long long>(account.primarySoid),
                                       objectCount,
                                       rawUsed,
@@ -276,7 +285,9 @@ bool prepare_social_roster(Scratch& scratch,
                                       static_cast<unsigned>(emblemHash),
                                       static_cast<int>(member.activityIndex),
                                       static_cast<int>(member.previousActivityIndex),
-                                      member.groupKey);
+                                      member.groupKey,
+                                      static_cast<int>(member.light),
+                                      static_cast<int>(member.triumphScore));
     if (written > 0) {
         core::log::write(core::log::Channel::server,
                          core::log::Level::info,

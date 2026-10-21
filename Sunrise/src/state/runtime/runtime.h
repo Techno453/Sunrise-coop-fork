@@ -5,13 +5,19 @@
 #include <cstdint>
 #include <optional>
 #include <span>
-#include <variant>
+#include <vector>
 
 #include "../account/account_context.h"
 #include "../build_data/items/quest_initialization.h"
 #include "../build_data/records/definition.h"
+#include "../build_data/rewards/definition.h"
 #include "../build_data/vendors/definition.h"
+#include "../unlocks/definition.h"
 #include "state.h"
+
+namespace sunrise::state::unlocks {
+struct Table;
+}
 
 namespace sunrise::state::account::settings {
 
@@ -21,6 +27,10 @@ struct SettingsDelta;
 
 namespace sunrise::state {
 
+/** Which prepare path grants one installed item. */
+enum class ItemGrantRoute : std::uint8_t { unavailable, quest, profile, reward };
+/** Chooses the prepare path from the item's wrapper, quest setup and bucket. */
+[[nodiscard]] ItemGrantRoute item_grant_route(std::uint16_t itemIndex) noexcept;
 /**
  * Assigns runtime SOIDs only to installed profile mod/shader rows which are socket action sources.
  * Currency, material, and consumable profile rows remain canonically non-instanced.
@@ -200,34 +210,23 @@ struct PendingProfileItemAcquisition {
     bool prepared{};
 };
 
-/** Prepared fixed package expansion kept private until every object and response byte fits. */
-struct PendingDirectItemBundle {
-    CharacterState beforeCharacter{};
-    CharacterState afterCharacter{};
-    std::uint64_t accountSoid{};
-    std::uint64_t characterSoid{};
-    std::uint64_t firstInstanceSoid{};
-    std::uint32_t sourceDefinitionHash{};
-    std::size_t characterIndex{};
-    std::size_t expectedInventoryCount{};
-    std::size_t itemCount{};
-    bool prepared{};
-};
-
-/** Shared batch capacity covers both Triumph rewards and the nine-row Season package. */
-inline constexpr std::size_t kRecordRewardGrantCapacity = 9;
+/** Shared batch capacity bounds one reward transaction. */
+inline constexpr std::size_t kRecordRewardGrantCapacity = build_data::rewards::kGrantCapacity;
 static_assert(kRecordRewardGrantCapacity >= build_data::records::kRewardPerRecordCapacity);
 
 /** One direct item requested by a record reward policy. */
 struct DirectRecordReward {
     std::uint16_t itemDefinitionIndex{};
     std::int32_t quantity{};
+    std::span<const build_data::rewards::SocketOverride> sockets{};
+    bool acquireUnlock{};
 };
 
 enum class RecordRewardKind : std::uint8_t {
     characterInstance,
     characterStack,
     profileStack,
+    accountUnlock,
 };
 
 /** Native row identity of one item inside a prepared record-reward batch. */
@@ -241,6 +240,14 @@ struct PreparedRecordReward {
     std::uint16_t inventoryRow{};
     RecordRewardKind kind{};
     bool appendedProfileResident{};
+    std::uint16_t acquiredFlag{build_data::rewards::kAbsent};
+    std::uint8_t previousFlag{};
+};
+
+/** One consumed wrapper's acquisition flag and the value its preparation observed. */
+struct PreparedRewardFlag {
+    std::uint16_t index{};
+    std::uint8_t previousValue{};
 };
 
 /** A reward grant that claims no record carries this instead of a record row. */
@@ -255,6 +262,8 @@ struct PendingRecordRewardGrant {
     std::array<account::inventory::ProfileItem, account::inventory::kProfileItemCapacity>
         afterProfileItems{};
     std::array<PreparedRecordReward, kRecordRewardGrantCapacity> rewards{};
+    /** Sorted acquisition flags from wrappers which opened without remaining in inventory. */
+    std::vector<PreparedRewardFlag> wrapperFlags;
     /** Record claimed with this grant, already written to the banks, or the unclaimed row. */
     std::uint16_t claimedRecordIndex{kUnclaimedRecordIndex};
     std::uint64_t accountSoid{};
@@ -266,14 +275,14 @@ struct PendingRecordRewardGrant {
     bool prepared{};
 };
 
-/** One uncommitted Season reward and the exact native row or bundle it will claim. */
+/** How one reward preparation ended. */
+enum class RewardPreparation : std::uint8_t { prepared, deferred, unresolvable };
+
+/** One uncommitted Season reward, the native row it will claim, and the seed of its draw. */
 struct PendingSeasonPassReward {
-    std::variant<PendingItemAcquisition,
-                 PendingProfileItemAcquisition,
-                 PendingDirectItemBundle,
-                 PendingRecordRewardGrant>
-        grant{};
+    PendingRecordRewardGrant grant{};
     std::uint32_t sourceDefinitionHash{};
+    std::uint64_t seed{};
     std::uint16_t rewardIndex{};
     bool prepared{};
 };
@@ -475,6 +484,28 @@ void publish_sign_in_time(std::uint64_t seconds) noexcept;
 [[nodiscard]] bool set_selected_character(std::uint64_t characterSoid) noexcept;
 
 /**
+ * Adds an unselected character to a free slot with its starter set and saves the account.
+ * @param characterClass Character class: 0 Titan, 1 Hunter, 2 Warlock.
+ * @param gender Character gender: 0 male, 1 female.
+ * @param race Character race: 0 human, 1 awoken, 2 exo.
+ * @param appearanceHeader Appearance header from the request, in record byte order.
+ * @param characterSoid Receives the new character's id, zero on failure.
+ * @return False when nothing was saved.
+ */
+[[nodiscard]] bool create_character(std::uint8_t characterClass,
+                                    std::uint8_t gender,
+                                    std::uint8_t race,
+                                    const AppearanceHeader& appearanceHeader,
+                                    std::uint64_t& characterSoid) noexcept;
+
+/**
+ * Removes one character with its items and slot-keyed rows and saves the account.
+ * @param characterSoid Id of the character to remove.
+ * @return False when nothing was saved.
+ */
+[[nodiscard]] bool delete_character(std::uint64_t characterSoid) noexcept;
+
+/**
  * Stores the selected character's equipped title row. The caller proves the record is a claimed
  * title; this only writes it.
  * @param recordIndex Title record row, or kUnequippedTitleRecordIndex to clear it.
@@ -538,17 +569,30 @@ prepare_item_acquisition(std::uint16_t collectibleIndex,
 [[nodiscard]] bool prepare_item_acquisition_for_item(std::uint16_t itemDefinitionIndex,
                                                      PendingItemAcquisition& mutation) noexcept;
 
-/** Prepares one fixed wrapper expansion without changing account State. */
-[[nodiscard]] bool prepare_direct_item_bundle(std::uint32_t sourceDefinitionHash,
-                                              std::span<const std::uint16_t> itemDefinitionIndices,
-                                              PendingDirectItemBundle& mutation) noexcept;
-
-/** Builds the full account after-image while a prepared bundle remains current. */
-[[nodiscard]] bool preview_direct_item_bundle(const PendingDirectItemBundle& mutation,
-                                              AccountState& after) noexcept;
-
 /** Atomically commits one prepared reward grant and its durable Season claim. */
 [[nodiscard]] bool commit_season_pass_reward(PendingSeasonPassReward& mutation) noexcept;
+/**
+ * Resolves an installed item or wrapper for the selected character.
+ * @param seed Caller-drawn entropy for any wrapper draws.
+ * @param refusal Receives a static reason on failure.
+ */
+[[nodiscard]] RewardPreparation prepare_item_reward(std::uint16_t itemIndex,
+                                                    std::uint32_t quantity,
+                                                    std::uint64_t seed,
+                                                    PendingRecordRewardGrant& mutation,
+                                                    const char** refusal = nullptr) noexcept;
+/**
+ * Prepares an eligible native pass row without writing its claim or acquisition flags.
+ * @param seed Caller-drawn entropy; the commit replays the same draw from it.
+ * @param refusal Receives a static reason on failure.
+ */
+[[nodiscard]] bool prepare_season_pass_reward(std::uint16_t rewardIndex,
+                                              std::uint64_t seed,
+                                              PendingSeasonPassReward& mutation,
+                                              const char** refusal = nullptr) noexcept;
+/** Applies a prepared grant's acquisition flags to the saved banks; false if one moved. */
+[[nodiscard]] bool preview_reward_unlocks(const PendingRecordRewardGrant& mutation,
+                                          unlocks::Table& after) noexcept;
 
 /** Atomically commits one prepared Triumph reward and its durable record claim. */
 [[nodiscard]] bool commit_record_reward(PendingRecordRewardGrant& mutation) noexcept;
@@ -558,11 +602,13 @@ prepare_item_acquisition(std::uint16_t collectibleIndex,
  * @param rewards Item rows the record grants.
  * @param claimedRecordIndex Record already claimed in the banks, or kUnclaimedRecordIndex.
  * @param mutation Receives the prepared grant.
- * @return True when every row fits the account after-image.
+ * @return Prepared when every row fits the account after-image.
  */
-[[nodiscard]] bool prepare_record_reward_grant(std::span<const DirectRecordReward> rewards,
-                                               std::uint16_t claimedRecordIndex,
-                                               PendingRecordRewardGrant& mutation) noexcept;
+[[nodiscard]] RewardPreparation
+prepare_record_reward_grant(std::span<const DirectRecordReward> rewards,
+                            std::uint16_t claimedRecordIndex,
+                            PendingRecordRewardGrant& mutation,
+                            const char** refusal = nullptr) noexcept;
 
 /** Builds the full account after-image while a record reward remains current. */
 [[nodiscard]] bool preview_record_reward_grant(const PendingRecordRewardGrant& mutation,
@@ -769,7 +815,10 @@ inline constexpr std::uint16_t kArtifactUnlockProgressionIndex = 39;
 /** @return Seasonal XP published in the account progression bank. */
 [[nodiscard]] std::int32_t seasonal_experience() noexcept;
 
-/** Publishes every seasonal value the seeded XP and artifact ownership imply. */
+/**
+ * Publishes every seasonal value the seeded XP and artifact ownership imply.
+ * An owed earned-perk walk runs here too.
+ */
 [[nodiscard]] bool seed_seasonal_progression() noexcept;
 
 /** @return One-based Season of Arrivals rank the published XP earns. */
@@ -779,7 +828,8 @@ inline constexpr std::uint16_t kArtifactUnlockProgressionIndex = 39;
 [[nodiscard]] std::uint16_t artifact_power_bonus() noexcept;
 
 /**
- * Adds base XP to the seasonal lanes and republishes every value derived from the total.
+ * Adds base XP to the seasonal lanes and republishes every value derived from the total,
+ * including earned-perk flags when a rank is reached or a walk is owed.
  * @param amount Positive XP to grant.
  * @return False when the amount is not positive or the total would overflow.
  */

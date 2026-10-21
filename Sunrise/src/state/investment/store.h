@@ -1,5 +1,8 @@
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
+#include <span>
 #include <string>
 #include <string_view>
 
@@ -28,7 +31,8 @@ enum class Bank : int {
                         std::string_view schema,
                         std::string_view defaults,
                         std::string_view settingsSchema,
-                        std::string_view settingsDefaults) noexcept;
+                        std::string_view settingsDefaults,
+                        std::string_view characterStarter) noexcept;
 void shutdown() noexcept;
 /** Binds an upstream seed account once, preserving all slot-owned investment rows. */
 [[nodiscard]] bool bind_identity(std::uint64_t primarySoid) noexcept;
@@ -60,6 +64,31 @@ void set_sign_in_time(std::uint64_t seconds) noexcept;
 [[nodiscard]] bool read_entitlements(entitlements::Table& output) noexcept;
 [[nodiscard]] bool bootstrap_completed(std::string_view name) noexcept;
 [[nodiscard]] bool complete_bootstrap(std::string_view name) noexcept;
+
+/**
+ * Fills a created character's level, card, destination and content fields from the save.
+ * @param character Character whose other fields stay unchanged.
+ * @return False when the one starter row does not read.
+ */
+[[nodiscard]] bool read_starter_character(CharacterState& character) noexcept;
+
+/**
+ * Reads Sunrise's own starter rows for one class, in position order.
+ * @param characterClass Class byte: 0 Titan, 1 Hunter, 2 Warlock.
+ * @param output Receives the definition hashes.
+ * @param count Receives the row count.
+ * @return False when the rows do not read or do not fit output.
+ */
+[[nodiscard]] bool read_starter_items(std::uint8_t characterClass,
+                                      std::span<std::uint32_t> output,
+                                      std::size_t& count) noexcept;
+
+/**
+ * Drops one character's slot-keyed unlock and reward rows and moves later slots down one.
+ * @param slot Character slot the removed character held.
+ * @return True when every row moved in one transaction.
+ */
+[[nodiscard]] bool remove_character_rows(std::size_t slot) noexcept;
 
 /** An earned reward stays in the database until its inventory grant commits. */
 struct PendingReward {

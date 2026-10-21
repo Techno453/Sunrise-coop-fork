@@ -47,3 +47,6 @@
 /** Account preferences have their own schema and seed data in the save. */
 #define IDR_ACCOUNT_SETTINGS_SCHEMA 109
 #define IDR_ACCOUNT_SETTINGS_DEFAULTS 110
+
+/** A created character's starting state has its own tables and rows in the save. */
+#define IDR_CHARACTER_STARTER 111

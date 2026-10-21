@@ -407,6 +407,7 @@ bool is_current(const wchar_t* sdkDirectory, const state::activity_sdk::Catalog&
         source.actorSequenceEntries = catalog.actor_sequence_entries();
         source.actorSequenceBindings = catalog.actor_sequence_bindings();
         source.authoredSceneEventKeys = catalog.authored_scene_event_keys();
+        source.dialogueCues = catalog.dialogue_cues();
         Bundle expected{};
         if (!internal::render_contract_files(source, expected)) {
             return false;

@@ -9,8 +9,8 @@ namespace sunrise::state::activity_sdk::format {
 
 /** Eight-byte identity at the start of every runtime SDK pack. */
 inline constexpr std::array<char, 8> kMagic{'S', 'R', 'S', 'D', 'K', 'P', '0', '1'};
-/** Runtime-pack schema version accepted by this reader. */
-inline constexpr std::uint32_t kVersion = 43;
+/** Runtime-pack schema version accepted by this reader. 45 adds authored dialogue cue rows. */
+inline constexpr std::uint32_t kVersion = 45;
 /** The ABI contains only activity identity, topology, placement, and panel metadata. */
 inline constexpr std::uint32_t kSectionCount = 51;
 #if defined(SUNRISE_ACTIVITY_SDK_TESTING)
@@ -137,6 +137,14 @@ inline constexpr std::uint32_t kDialogueAuthoredListClass = 0x80808D54U;
 inline constexpr std::uint32_t kDialogueDefinitionArrayClass = 0x80808D18U;
 inline constexpr std::uint32_t kDialogueGroupArrayClass = 0x80808D19U;
 inline constexpr std::uint32_t kDialogueMaximumCueCount = 128U;
+/** Every dialogue line holds two takes of the same text. */
+inline constexpr std::uint32_t kDialogueTakeCount = 2U;
+/** A cue row's lines were read from one content tree carrying its definition hash. */
+inline constexpr std::uint32_t kDialogueCueLinesExact = 0x1U;
+/** That tree's length differs from the authored window; its lines are still kept. */
+inline constexpr std::uint32_t kDialogueCueWindowMismatch = 0x2U;
+inline constexpr std::uint32_t kDialogueCueFlagMask =
+    kDialogueCueLinesExact | kDialogueCueWindowMismatch;
 /** Inspect exposure is read-only and may be rendered by diagnostics. */
 inline constexpr std::uint32_t kInspectExposure = 0x1U;
 /** Panel-test exposure marks a candidate that still passes runtime gates. */
@@ -260,6 +268,21 @@ inline constexpr std::uint32_t kSquadFlagMask =
     | kSquadAllPointsExact | kSquadMemberCountValid | kSquadCandidateCountsInvariantComplete;
 /** A squad runs only with every extraction fact present. */
 inline constexpr std::uint32_t kSquadRunnableMask = kSquadFlagMask;
+/** The spawner names no rule of its own: a placement must select a type-66 rule slot. */
+inline constexpr std::uint32_t kSquadRequiresSelectedRule = 0x40U;
+/** Runnable without the authored edge and its points, which a selected rule replaces. */
+inline constexpr std::uint32_t kSquadSourcePrerequisiteMask =
+    kSquadRunnableMask & ~(kSquadSpawnerRuleEdgeExact | kSquadAllPointsExact);
+/**
+ * @return True when a squad row may be placed or commanded. A rule-less squad is exempt from the
+ * rule edge and points that its selected rule supplies.
+ */
+[[nodiscard]] constexpr bool squad_runnable(std::uint32_t flags) noexcept {
+    const std::uint32_t required = (flags & kSquadRequiresSelectedRule) != 0
+                                       ? kSquadSourcePrerequisiteMask
+                                       : kSquadRunnableMask;
+    return (flags & required) == required;
+}
 /** Member flags separate actor resolution from count-array completeness. */
 inline constexpr std::uint32_t kSquadMemberActorClassExact = 0x1U;
 inline constexpr std::uint32_t kSquadMemberCandidateCountsComplete = 0x2U;
@@ -468,7 +491,8 @@ inline constexpr std::size_t kAuthoredSceneResourceSize = 40;
 inline constexpr std::size_t kAuthoredSceneEventKeySize = 40;
 inline constexpr std::size_t kAuthoredSceneSquadEdgeSize = 40;
 inline constexpr std::size_t kTaskTargetSize = 44;
-inline constexpr std::size_t kDialogueCueTextSize = 36;
+inline constexpr std::size_t kDialogueCueSize = 40;
+inline constexpr std::size_t kDialogueCueTextSize = 52;
 inline constexpr std::size_t kDirectiveElementSize = 76;
 inline constexpr std::size_t kBehaviorProgramSize = 28;
 inline constexpr std::size_t kBehaviorInputSize = 36;
@@ -1273,17 +1297,25 @@ struct CombatObjectiveGroup final {
     bool operator==(const CombatObjectiveGroup&) const = default;
 };
 
-/** A delayed cue expires after this authored window; it is not a playback duration. */
+/**
+ * A delayed cue expires after this authored window; it is not a playback duration.
+ * One row per cue of a type-53 slot, in slot then cue order; lines are present only when
+ * kDialogueCueLinesExact is set.
+ */
 struct DialogueCue final {
     std::uint32_t slotIndex{};
     std::uint32_t cueIndex{};
     std::uint32_t definitionHash{};
     float authoredWindowSeconds{};
-
-    bool operator==(const DialogueCue&) const = default;
+    StringRef id{};
+    /** Dialogue list the cue was read from, the row's provenance. */
+    std::uint32_t listTag{};
+    std::uint32_t lineCount{};
+    std::uint32_t flags{};
+    std::uint32_t reserved{};
 };
 
-/** One localized variant belongs to one exact authored type-53 cue definition. */
+/** One localized take of one line of a cue, in slot, cue, line, then take order. */
 struct DialogueCueText final {
     StringRef id{};
     StringRef text{};
@@ -1292,6 +1324,11 @@ struct DialogueCueText final {
     std::uint32_t definitionHash{};
     std::uint32_t containerTag{};
     std::uint32_t stringHash{};
+    /** Play order of the line inside its cue. */
+    std::uint32_t lineIndex{};
+    std::uint32_t takeIndex{};
+    std::uint32_t audioTag{};
+    std::uint32_t durationMs{};
 };
 
 /** One bounded authored type-68 HUD element; an absent field is empty with zero source tags. */
@@ -1608,6 +1645,7 @@ static_assert(sizeof(AuthoredSceneResource) == kAuthoredSceneResourceSize);
 static_assert(sizeof(AuthoredSceneEventKey) == kAuthoredSceneEventKeySize);
 static_assert(sizeof(AuthoredSceneSquadEdge) == kAuthoredSceneSquadEdgeSize);
 static_assert(sizeof(TaskTarget) == kTaskTargetSize);
+static_assert(sizeof(DialogueCue) == kDialogueCueSize);
 static_assert(sizeof(DialogueCueText) == kDialogueCueTextSize);
 static_assert(sizeof(DirectiveElement) == kDirectiveElementSize);
 static_assert(sizeof(BehaviorProgram) == kBehaviorProgramSize);

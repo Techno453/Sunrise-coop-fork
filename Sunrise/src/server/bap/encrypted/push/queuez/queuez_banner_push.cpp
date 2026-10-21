@@ -246,7 +246,8 @@ bool append_account_resync_appearance_notification(
     const state::AccountState account = state::bound_account_snapshot();
     const std::uint64_t selected = state::account::selected_character_soid(account);
     if (selected == 0) {
-        return false;
+        // Before a pick no appearance record is owed, so nothing is appended.
+        return true;
     }
     if (before.family0Character != selected) {
         return append_banner_move_notification(
@@ -288,6 +289,10 @@ bool append_account_resync_roster_notification(Scratch& scratch,
     }
     const state::AccountState account = state::bound_account_snapshot();
     const std::uint64_t selected = state::account::selected_character_soid(account);
+    if (selected == 0) {
+        // Before a pick no character record is owed, so nothing is appended.
+        return true;
+    }
     std::size_t characterIndex = account.characterCount;
     for (std::size_t index = 0; index < account.characterCount; ++index) {
         if (account.characters[index].soid == selected) {
@@ -297,7 +302,7 @@ bool append_account_resync_roster_notification(Scratch& scratch,
     }
     queuez::RosterAppearanceRefresh refresh{};
     snapshot::Prepared prepared{};
-    if (selected == 0 || characterIndex >= account.characterCount
+    if (characterIndex >= account.characterCount
         || !queuez::stage_roster_appearance_refresh(before, selected, includeRoster, refresh)
         || !snapshot::prepare_roster_appearance_refresh(
             scratch, refresh, account.characters[characterIndex], characterIndex, prepared)

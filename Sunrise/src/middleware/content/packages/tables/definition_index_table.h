@@ -103,6 +103,8 @@ inline constexpr std::uint32_t kUnlockReadValueOpcode = 10;
 inline constexpr std::uint32_t kUnlockReadFlagOpcode = 1;
 /** The opcode that pushes a literal. */
 inline constexpr std::uint32_t kUnlockLiteralOpcode = 11;
+/** The opcode that expands a shared expression row. Its operand is the row index. */
+inline constexpr std::uint32_t kUnlockExpressionOpcode = 12;
 /** The opcode that tests greater than or equal. */
 inline constexpr std::uint32_t kUnlockGreaterEqualOpcode = 14;
 /** High half every installed array marker and element class carries. */
@@ -123,6 +125,11 @@ inline constexpr std::size_t kNodeExpressionFieldAlternate = 48;
 /** Records a node owns, four bytes each as a row then a gate. */
 inline constexpr std::size_t kNodeChildRecordField = 136;
 inline constexpr std::size_t kNodeChildRecordStride = 4;
+/**
+ * Array descriptor of the profile flag mapping table, between the account (+8) and character (+40)
+ * maps. Profile flags are account-wide but saved in their own bank, not the account flag bank.
+ */
+inline constexpr std::size_t kProfileFlagMapDescriptor = 24;
 /** Array descriptor of the character object's flag mapping table, sized to that bank. */
 inline constexpr std::size_t kCharacterFlagMapDescriptor = 40;
 /** Array descriptor of the character object's value mapping table, sized to that bank. */
@@ -216,10 +223,9 @@ inline constexpr std::size_t kProgressionRewardItemIndexOffset = 4;
 inline constexpr std::size_t kProgressionRewardQuantityOffset = 8;
 /** Unlock flag slot a reward's claim sets. The slots run dense in reward order. */
 inline constexpr std::size_t kProgressionRewardClaimSlotOffset = 20;
-/** Items a wrapper item opens into, two bytes each as an item-definition index. */
-inline constexpr std::size_t kGearsetItemField = 392;
-inline constexpr std::uint32_t kGearsetItemRowClass = 0x808087DBU;
-inline constexpr std::size_t kGearsetItemStride = 2;
+/** Eligibility expressions and socket overrides carried by one progression reward. */
+inline constexpr std::size_t kProgressionRewardConditionsOffset = 24;
+inline constexpr std::size_t kProgressionRewardSocketsOffset = 40;
 
 /** Expression that makes one collectible acquired, which a purchase or a grant sets. */
 inline constexpr std::size_t kCollectibleAcquiredExpressionField = 112;
@@ -277,6 +283,13 @@ using RowVisitor = bool (*)(void* context, std::uint32_t index, const IndexRow& 
                                           std::size_t descriptorOffset,
                                           Array& output) noexcept;
 
+/** Reads an optional typed array and checks every fixed-stride row lies in its blob. */
+[[nodiscard]] bool read_array(std::span<const std::byte> blob,
+                              std::size_t at,
+                              std::uint32_t elementClass,
+                              std::size_t stride,
+                              Array& rows) noexcept;
+
 /**
  * Finds the first array whose header names one element class.
  * @param blob Whole definition bytes.
@@ -322,6 +335,8 @@ slot_tag(std::span<const std::byte> blob, std::size_t index, std::uint32_t& tag)
 
 /** The investment root holds the item index table at this slot. */
 inline constexpr std::size_t kItemTableSlot = 48;
+/** The investment root holds the new-character table, one row of items per class, here. */
+inline constexpr std::size_t kStarterSetTableSlot = 15;
 /** The investment root holds the shared reusable/randomized plug-set table at this slot. */
 inline constexpr std::size_t kPlugSetTableSlot = 51;
 /** The investment root holds the dense ordinary socket-type table at this slot. */

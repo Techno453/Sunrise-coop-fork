@@ -3,7 +3,7 @@
 #include <limits>
 
 #include "../reader/layout.h"
-#include "internal.h"
+#include "field_reader.h"
 
 namespace sunrise::middleware::content::packages::tables {
 namespace {
@@ -124,6 +124,18 @@ bool find_optional_array_at(std::span<const std::byte> blob,
                             std::size_t descriptorOffset,
                             Array& output) noexcept {
     return resolve_descriptor(blob, descriptorOffset, true, output);
+}
+
+/** Reads an optional typed array and checks every fixed-stride row lies in its blob. */
+bool read_array(std::span<const std::byte> blob,
+                std::size_t at,
+                std::uint32_t elementClass,
+                std::size_t stride,
+                Array& rows) noexcept {
+    return stride != 0 && find_optional_array_at(blob, at, rows)
+           && (rows.count == 0
+               || (rows.elementClass == elementClass && rows.dataOffset <= blob.size()
+                   && rows.count <= (blob.size() - rows.dataOffset) / stride));
 }
 
 /** Finds the first array whose header names one element class. */

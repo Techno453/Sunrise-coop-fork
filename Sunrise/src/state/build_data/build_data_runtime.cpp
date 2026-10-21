@@ -22,6 +22,7 @@
 #include "nodes/node_catalog.h"
 #include "progressions/progression_catalog.h"
 #include "records/record_catalog.h"
+#include "rewards/reward_catalog.h"
 #include "runtime.h"
 #include "runtime/build_data_catalog_runtime.h"
 #include "runtime/domain_markers.h"
@@ -120,6 +121,12 @@ bool initialize(void* module, std::uint64_t configuredEquipmentHash) noexcept {
     };
     if (!constants::replace(cachedConstants) || !content::replace(domains.named) || !content::seal()
         || !items::replace(domains.items) || !collectibles::replace(domains.collectibles)
+        || !rewards::replace({domains.rewardPools,
+                              domains.rewardEntries,
+                              domains.rewardItems,
+                              domains.rewardInstructions,
+                              domains.rewardModifiers,
+                              domains.rewardSockets})
         || !material_requirements::replace(domains.materialRequirementSets)
         || !inventory::buckets::replace(domains.inventoryBuckets)
         || !socket_entry_lists::replace(domains.socketEntryLists)
@@ -131,8 +138,7 @@ bool initialize(void* module, std::uint64_t configuredEquipmentHash) noexcept {
         || !catalystsReplaced || !abilities::replace(domains.abilityBuckets)
         || !progressions::replace(domains.progressions, domains.progressionSteps)
         // An empty catalog is complete: a build with no installed pass declares no reward.
-        || (!domains.seasonPassRewards.empty()
-            && !season_pass::replace(domains.seasonPassRewards, domains.seasonPassPackages))
+        || (!domains.seasonPassRewards.empty() && !season_pass::replace(domains.seasonPassRewards))
         || !bounties::replace(domains.bounties)
         || !records::replace(domains.records,
                              domains.recordObjectives,

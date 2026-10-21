@@ -28,6 +28,9 @@ public:
     /** Reads only the root version; a missing version is zero. */
     [[nodiscard]] bool parse_version(std::uint32_t& output, bool* compact = nullptr) noexcept;
 
+    /** @return The settings name of a supported menu toggle key, or empty when it is not one. */
+    [[nodiscard]] static std::string_view ui_toggle_key_name(UINT virtualKey) noexcept;
+
 private:
     /** @return True when the next unread byte opens a string, for the compact forms. */
     [[nodiscard]] bool quoted_value() const noexcept;

@@ -58,7 +58,7 @@ struct RuntimeAuthoredValue final {
     if (field.typeCode == 11) {
         return value.kind == ValueKind::real32 && std::isfinite(value.realValue);
     }
-    if (field.typeCode == 35) {
+    if (is_raw64(field.typeCode)) {
         return value.kind == ValueKind::unsignedInteger;
     }
     const std::uint8_t width = storage_width(field.typeCode);
@@ -230,16 +230,15 @@ private:
     /** Applies the published bias and width before writing one scalar. */
     [[nodiscard]] RuntimeWalkStatus write_scalar(const runtime::FieldView& field,
                                                  const RuntimeAuthoredValue& value,
-                                                 RuntimeMemoryMap& memory,
-                                                 bool inlineArm = false) noexcept {
+                                                 RuntimeMemoryMap& memory) noexcept {
         if (!valid_runtime_scalar(field, value)) {
             return RuntimeWalkStatus::unsupportedField;
         }
-        const bool raw64 = field.typeCode == 35;
+        const bool raw64 = is_raw64(field.typeCode);
         const std::uint8_t nativeWidth = raw64 ? 64 : storage_width(field.typeCode);
         const std::uint8_t declaredWidth = raw64 ? 64 : runtime_declared_width(field);
-        if (nativeWidth == 0
-            || (declaredWidth == 0 && (!inlineArm || field.widthOrCountOffset != 0))) {
+        // Mirrors the decoder: a zero declared width writes no bits.
+        if (nativeWidth == 0) {
             return RuntimeWalkStatus::unsupportedField;
         }
         std::uint64_t decoded = 0;
@@ -263,7 +262,7 @@ private:
         if ((raw & ~mask(declaredWidth)) != 0) {
             return RuntimeWalkStatus::unsupportedField;
         }
-        if (declaredWidth != 0 && !writer_.write(raw, declaredWidth)) {
+        if (!writer_.write(raw, declaredWidth)) {
             return RuntimeWalkStatus::outputTooSmall;
         }
         if (!raw64) {
@@ -660,22 +659,6 @@ private:
         if (resolver_.canonicalType != nullptr) {
             field.typeCode = resolver_.canonicalType(resolver_.context, field.typeCode);
         }
-        // A type-34 or type-41 arm is a selected schema: a nullable handle, then its body.
-        if (field.typeCode == 34 || field.typeCode == 41) {
-            return write_selected(owner, field, occurrence, depth);
-        }
-        if (field.typeCode == kRuntimeCustomSchemaType) {
-            const auto handle = resolver_.customSchema != nullptr
-                                    ? resolver_.customSchema(resolver_.context, field.typeCode)
-                                    : 0;
-            runtime::SchemaView body{};
-            if (handle == 0 || resolver_.findSchema == nullptr
-                || !resolver_.findSchema(resolver_.context, handle, body) || body.handle != handle
-                || !valid_runtime_schema(body)) {
-                return RuntimeWalkStatus::schemaUnavailable;
-            }
-            return walk_schema(body, depth + 1);
-        }
         if (field.typeCode == 13 || field.typeCode == 39) {
             return write_vector3(owner, field, occurrence);
         }
@@ -802,6 +785,14 @@ private:
                 && resolver_.isZeroBitType(resolver_.context, field.typeCode)) {
                 return RuntimeWalkStatus::complete;
             }
+            // The native union reader dispatches through the per-type table, where a nested
+            // arm is a no-op and a type-34 arm is the ordinary selected-schema reader.
+            if (field.typeCode == runtime::kNestedType) {
+                return RuntimeWalkStatus::complete;
+            }
+            if (field.typeCode == runtime::kSelectedType) {
+                return write_selected(owner, field, occurrence, depth);
+            }
             return write_inline_type(owner, field, occurrence, memory, depth + 1);
         }
         if (field.typeCode == 28) {
@@ -829,7 +820,7 @@ private:
         if (!source_.take(owner, field, occurrence, ValueRole::scalar, value)) {
             return RuntimeWalkStatus::missingValue;
         }
-        return write_scalar(field, value, memory, true);
+        return write_scalar(field, value, memory);
     }
 
     /** Encodes every occurrence of one reflected field transactionally. */
@@ -852,8 +843,7 @@ private:
                             || field.typeCode == 24 || field.typeCode == 25 || field.typeCode == 26
                             || field.typeCode == 27 || field.typeCode == 28 || field.typeCode == 39
                             || field.typeCode == 40 || field.typeCode == 42 || field.typeCode == 43
-                            || field.typeCode == 44 || field.typeCode == 45
-                            || field.typeCode == kRuntimeCustomSchemaType;
+                            || field.typeCode == 44 || field.typeCode == 45;
         const bool zeroBit = resolver_.isZeroBitType != nullptr
                              && resolver_.isZeroBitType(resolver_.context, field.typeCode);
         // A selected field carries its schema handle on the wire, so it is structural but must
@@ -861,7 +851,7 @@ private:
         const bool nestedSchemaKind =
             nested || command || entityReference || schemaReference || custom;
         const bool unknownOptional = field.presence != 0 && !nestedSchemaKind && !selected
-                                     && !zeroBit && field.typeCode != 35
+                                     && !zeroBit && !is_raw64(field.typeCode)
                                      && storage_width(field.typeCode) == 0;
         const bool structural = nestedSchemaKind || selected || zeroBit || unknownOptional;
         if (!nestedSchemaKind && field.nestedSchemaRow != runtime::kAbsentRuntimeRow) {

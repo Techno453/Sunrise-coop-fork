@@ -52,6 +52,11 @@ class MirrorBuilder final {
 public:
     state::gameplay::entity_identity::ActorSourceReference actorSource{};
     state::gameplay::entity_identity::DamagePools damage{};
+    std::uint16_t damageHealth{};
+    std::uint16_t damageShield{};
+    bool damageKnown{};
+    /** Damage pools seen so far; each pool is its own nested walk. */
+    std::uint8_t damagePools{};
     /** Opens an empty fixed-capacity bit writer. */
     MirrorBuilder() noexcept : writer_(bytes_) {}
 
@@ -82,6 +87,9 @@ public:
         candidate.byteCount = static_cast<std::uint16_t>(sizeof(header) + byteCount);
         candidate.actorSource = actorSource;
         candidate.damage = damage;
+        candidate.damageHealth = damageHealth;
+        candidate.damageShield = damageShield;
+        candidate.damageKnown = damageKnown;
         output = candidate;
         return true;
     }

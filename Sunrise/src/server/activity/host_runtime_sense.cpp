@@ -539,9 +539,12 @@ void apply_sense(const SenseInput& input, std::uint64_t now) noexcept {
 } // namespace detail
 
 /** Queues one owned msg-6 prefix for the Activity Host service. */
-bool submit_sense(const SenseInput& input) noexcept {
-    if (!state::activity::binding_matches(input.binding) || input.sourceGeneration == 0) {
-        return false;
+IngressRefusal submit_sense(const SenseInput& input) noexcept {
+    if (!state::activity::binding_matches(input.binding)) {
+        return IngressRefusal::binding;
+    }
+    if (input.sourceGeneration == 0) {
+        return IngressRefusal::generation;
     }
     AcquireSRWLockExclusive(&g_lock);
     PendingInput pending{};
@@ -550,11 +553,11 @@ bool submit_sense(const SenseInput& input) noexcept {
     if (!append_pending(pending)) {
         ++g_droppedIngress;
         ReleaseSRWLockExclusive(&g_lock);
-        return false;
+        return IngressRefusal::queue;
     }
     ++g_queuedIngress;
     ReleaseSRWLockExclusive(&g_lock);
-    return true;
+    return IngressRefusal::none;
 }
 
 /** Copies the armed scan model for one exact type-65 slot that has reported at least once. */

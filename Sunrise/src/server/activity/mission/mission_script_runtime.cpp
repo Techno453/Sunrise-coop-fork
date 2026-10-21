@@ -20,6 +20,7 @@
 
 #include "../../../core/logging/log.h"
 #include "../../../core/settings/settings.h"
+#include "../../../middleware/gameplay/external/external_entity_codec.h"
 #include "../../../state/activity/entity_slots/member_leases.h"
 #include "../../../state/activity/mission/runtime.h"
 #include "../../../state/activity/runtime.h"
@@ -320,6 +321,48 @@ void report_squad_provoked(const state::activity::SessionBinding& binding,
     ReleaseSRWLockExclusive(&g_lock);
 }
 
+/**
+ * Queues one replicated damage level for a squad slot, once per change.
+ * @param binding Activity generation that accepted the entity update.
+ * @param sourceGeneration ActivityClient generation that owns the policy.
+ * @param registryKey Authored registry key.
+ * @param slotType Authored slot type: the squad's, or the combatant's own.
+ * @param slotIndex Authored slot index.
+ * @param health Pool 0 of the damage component, 0 to kDamageLevelFull.
+ * @param shield Pool 1 of the damage component, 0 to kDamageLevelFull.
+ */
+void report_squad_damage(const state::activity::SessionBinding& binding,
+                         std::uint64_t sourceGeneration,
+                         std::uint32_t registryKey,
+                         std::uint8_t slotType,
+                         std::uint16_t slotIndex,
+                         std::uint16_t health,
+                         std::uint16_t shield) noexcept {
+    constexpr std::uint16_t full = middleware::gameplay::external::kDamageLevelFull;
+    if (sourceGeneration == 0 || registryKey == 0 || health > full || shield > full
+        || slotIndex > static_cast<std::uint16_t>((std::numeric_limits<std::int16_t>::max)())) {
+        return;
+    }
+    AcquireSRWLockExclusive(&g_lock);
+    auto* instance = find_instance(binding);
+    if (instance != nullptr && instance->view.activityClientGeneration == sourceGeneration) {
+        push_entity_damage(*instance,
+                           registryKey,
+                           slotType,
+                           slotIndex,
+                           static_cast<float>(health) / static_cast<float>(full),
+                           static_cast<float>(shield) / static_cast<float>(full),
+                           GetTickCount64());
+    } else {
+        // Nothing else records a level that finds no mission.
+        log_line(core::log::Level::debug,
+                 instance,
+                 "combatant_damage",
+                 instance == nullptr ? "no_instance" : "stale_generation");
+    }
+    ReleaseSRWLockExclusive(&g_lock);
+}
+
 /** Retains the last VM stage and status shown on the panel. */
 void note_vm_status(RuntimeInstance& instance,
                     std::string_view stage,
@@ -337,6 +380,7 @@ void clear_sense_levels(RuntimeInstance& instance) noexcept {
     instance.ghostObservations = {};
     instance.damageObservations = {};
     instance.combatantDamageObservations = {};
+    instance.entityDamageObservations = {};
     instance.deviceObservations = {};
     instance.objectInteractionObservations = {};
     instance.objectStateObservations = {};
@@ -361,7 +405,7 @@ void clear_instance(RuntimeInstance& instance, bool clearPending) noexcept {
     std::vector<host::PendingScriptableOverride>{}.swap(instance.estate);
     instance.estateCopied = false;
     instance.liveLinkCount = 0;
-    instance.entityDamageObservations.fill({});
+    instance.entitySourceDamageObservations.fill({});
     instance.damageEntitySources.fill({});
     instance.nextEntityDamageTick = 0;
     instance.view = {};

@@ -218,8 +218,11 @@ bool frame_only(const ActivityClientBinding& binding,
         input.verdict = framed.verdict;
         input.decoded = parsedSense.decoded;
         input.hasFirstObject = parsedSense.hasFirstObject;
-        if (!server::activity::host::submit_sense(input)) {
-            report_message(request.messageType, request.sessionId, "host_ingress_refused");
+        const auto refusal = server::activity::host::submit_sense(input);
+        if (refusal != server::activity::host::IngressRefusal::none) {
+            report_message(request.messageType,
+                           request.sessionId,
+                           server::activity::host::ingress_refusal_name(refusal));
         }
     } else if (isIncident && framed.verdict == store::Verdict::framed) {
         server::activity::host::IncidentInput input{};
@@ -241,8 +244,11 @@ bool frame_only(const ActivityClientBinding& binding,
                 std::span(parsedIncident.payload).first(parsedIncident.payloadLength),
                 input.cinematic);
         }
-        if (!server::activity::host::submit_incident(input)) {
-            report_message(request.messageType, request.sessionId, "host_ingress_refused");
+        const auto refusal = server::activity::host::submit_incident(input);
+        if (refusal != server::activity::host::IngressRefusal::none) {
+            report_message(request.messageType,
+                           request.sessionId,
+                           server::activity::host::ingress_refusal_name(refusal));
         }
     }
     return true;

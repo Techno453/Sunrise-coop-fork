@@ -24,7 +24,9 @@ bool read_characters(AccountState& output) noexcept {
                           character.contentBypass,
                           character.equippedTitleRecordIndex,
                           character.acquiredSubclassAbilityMask,
-                          character.nextInventorySerial)
+                          character.nextInventorySerial,
+                          character.appearanceHeader,
+                          character.appearanceHeaderValid)
             || slot != output.characterCount || slot >= output.characters.size()) {
             return false;
         }
@@ -62,7 +64,7 @@ bool read_rewards(AccountState& output) noexcept {
 
 /** Characters are saved before their items to satisfy foreign keys. */
 bool write_characters(const AccountState& value) noexcept {
-    Statement rows("INSERT INTO characters VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)");
+    Statement rows("INSERT INTO characters VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
     for (std::size_t slot = 0; slot < value.characterCount; ++slot) {
         const auto& character = value.characters[slot];
         if (!rows.write(slot,
@@ -77,7 +79,9 @@ bool write_characters(const AccountState& value) noexcept {
                         character.contentBypass,
                         character.equippedTitleRecordIndex,
                         character.acquiredSubclassAbilityMask,
-                        character.nextInventorySerial)) {
+                        character.nextInventorySerial,
+                        character.appearanceHeader,
+                        character.appearanceHeaderValid)) {
             return false;
         }
     }
@@ -210,6 +214,80 @@ bool write_account(const AccountState& value) noexcept {
     }
     account::profiles::local_changed();
     return true;
+}
+
+/**
+ * Fills a created character's level, card, destination and content fields from the save.
+ * @param character Character whose other fields stay unchanged.
+ * @return False when the one starter row does not read; the character is then unchanged.
+ */
+bool read_starter_character(CharacterState& character) noexcept {
+    const std::lock_guard lock(g_mutex);
+    Statement row("SELECT level,preview_available,appearance_value,last_orbited_destination,"
+                  "content_bypass FROM starter_character WHERE id=1");
+    CharacterState staged = character;
+    if (row.step() != SQLITE_ROW
+        || !row.columns(staged.level,
+                        staged.previewAvailable,
+                        staged.appearanceValue,
+                        staged.lastOrbitedDestination,
+                        staged.contentBypass)) {
+        return false;
+    }
+    character = staged;
+    return true;
+}
+
+/**
+ * Reads Sunrise's own starter rows for one class, in position order.
+ * @param characterClass Class byte: 0 Titan, 1 Hunter, 2 Warlock.
+ * @param output Receives the definition hashes.
+ * @param count Receives the row count, zero on failure.
+ * @return False when the rows do not read or do not fit output.
+ */
+bool read_starter_items(std::uint8_t characterClass,
+                        std::span<std::uint32_t> output,
+                        std::size_t& count) noexcept {
+    const std::lock_guard lock(g_mutex);
+    count = 0;
+    Statement rows("SELECT definition_hash FROM starter_items WHERE class=? ORDER BY position");
+    if (!rows.parameters(characterClass)) {
+        return false;
+    }
+    int result = rows.step();
+    while (result == SQLITE_ROW) {
+        if (count >= output.size() || !rows.column(0, output[count])) {
+            count = 0;
+            return false;
+        }
+        ++count;
+        result = rows.step();
+    }
+    return result == SQLITE_DONE;
+}
+
+/**
+ * Drops one character's slot-keyed unlock and reward rows and moves later slots down one.
+ * @param slot Character slot the removed character held.
+ * @return True when every row moved in one transaction.
+ */
+bool remove_character_rows(std::size_t slot) noexcept {
+    Transaction transaction;
+    Statement unlocks("DELETE FROM unlocks WHERE character_slot=?");
+    Statement rewards("DELETE FROM pending_rewards WHERE character_slot=?");
+    if (!transaction.ready() || slot >= kCharacterCapacity || !unlocks.write(slot)
+        || !rewards.write(slot)) {
+        return false;
+    }
+    Statement moveUnlocks("UPDATE unlocks SET character_slot=? WHERE character_slot=?");
+    Statement moveRewards("UPDATE pending_rewards SET character_slot=? WHERE character_slot=?");
+    // Ascending, so every target slot is already empty and no key collides.
+    for (std::size_t from = slot + 1; from < kCharacterCapacity; ++from) {
+        if (!moveUnlocks.write(from - 1, from) || !moveRewards.write(from - 1, from)) {
+            return false;
+        }
+    }
+    return transaction.commit();
 }
 
 /** A sign-in timestamp belongs only to the current connection lifetime. */

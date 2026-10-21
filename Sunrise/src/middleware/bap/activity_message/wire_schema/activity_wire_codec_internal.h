@@ -114,6 +114,11 @@ public:
     }
 }
 
+/** @return True for a raw 64-bit field type. */
+[[nodiscard]] constexpr bool is_raw64(std::uint8_t typeCode) noexcept {
+    return typeCode == runtime::kRaw64AliasType || typeCode == runtime::kRaw64Type;
+}
+
 /** @return A low bit mask of the given width. Width 0 masks everything away. */
 [[nodiscard]] constexpr std::uint64_t mask(std::uint8_t width) noexcept {
     return width == 64  ? (std::numeric_limits<std::uint64_t>::max)()

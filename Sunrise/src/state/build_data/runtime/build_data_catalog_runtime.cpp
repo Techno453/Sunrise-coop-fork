@@ -14,6 +14,7 @@
 #include "../nodes/node_catalog.h"
 #include "../progressions/progression_catalog.h"
 #include "../records/record_catalog.h"
+#include "../rewards/reward_catalog.h"
 #include "../runtime.h"
 #include "../scenarios/scenario_catalog.h"
 #include "../season_pass/season_pass_catalog.h"
@@ -21,6 +22,7 @@
 #include "../socket_entry_buckets/socket_entry_bucket_catalog.h"
 #include "../socket_entry_lists/socket_entry_list_catalog.h"
 #include "../spawn_sets/spawn_set_catalog.h"
+#include "../starter_sets/starter_set_catalog.h"
 #include "../vendors/vendor_catalog.h"
 #include "domain_markers.h"
 #include "persistence/publication_transaction.h"
@@ -372,6 +374,7 @@ void clear_catalogs() noexcept {
     rollback_ability_publication();
     progressions::clear();
     season_pass::clear();
+    rewards::clear();
     bounties::clear();
     records::clear();
     nodes::clear();
@@ -381,6 +384,7 @@ void clear_catalogs() noexcept {
     rollback_name_catalog_publication();
     vendors::clear();
     constants::clear();
+    starter_sets::clear();
 }
 
 } // namespace runtime

@@ -27,6 +27,8 @@ inline constexpr std::uint16_t kNoEntityCell = 0xFFFF;
 inline constexpr std::size_t kMaximumTypePayloadBits = 16'384;
 /** Callback state can retain one complete bounded body plus its typed mirror header. */
 inline constexpr std::size_t kTypePayloadStateCapacity = kMaximumTypePayloadBits / 8U + 16U;
+/** A damage pool replicates a ten-bit level, so 1023 is full. */
+inline constexpr std::uint16_t kDamageLevelFull = 1023;
 
 /** Record flags transported by the five explicit envelope bits. */
 enum EntityRecordFlag : std::uint16_t {
@@ -69,6 +71,10 @@ struct TypePayload {
     std::uint16_t byteCount{};
     state::gameplay::entity_identity::ActorSourceReference actorSource{};
     state::gameplay::entity_identity::DamagePools damage{};
+    /** Damage component 0x80804BEE pools 0 and 1, ten-bit levels; valid when damageKnown. */
+    std::uint16_t damageHealth{};
+    std::uint16_t damageShield{};
+    bool damageKnown{};
 };
 
 /** One generic channel-2 record and its callback-owned type state. */

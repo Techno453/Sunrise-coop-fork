@@ -41,12 +41,13 @@ constexpr std::array<ChannelChoice, 6> kChannelChoices{{
     {"Middleware", true, log::Channel::middleware},
 }};
 /** Ordered choices map the level combo index to one exact emitted severity. */
-constexpr std::array<LevelChoice, 5> kLevelChoices{{
+constexpr std::array<LevelChoice, 6> kLevelChoices{{
     {"All levels", false, log::Level::error},
     {"Error", true, log::Level::error},
     {"Warn", true, log::Level::warn},
     {"Info", true, log::Level::info},
     {"Debug", true, log::Level::debug},
+    {"Trace", true, log::Level::trace},
 }};
 
 struct SelectionState {

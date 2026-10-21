@@ -68,11 +68,13 @@ bool initialize(void* module) noexcept {
     std::string_view defaults;
     std::string_view settingsSchema;
     std::string_view settingsDefaults;
+    std::string_view characterStarter;
     if (!resource(module, IDR_INVESTMENT_SCHEMA, schema)
         || !resource(module, IDR_INVESTMENT_DEFAULTS, defaults)
         || !resource(module, IDR_ACCOUNT_SETTINGS_SCHEMA, settingsSchema)
         || !resource(module, IDR_ACCOUNT_SETTINGS_DEFAULTS, settingsDefaults)
-        || !open(filename, schema, defaults, settingsSchema, settingsDefaults)) {
+        || !resource(module, IDR_CHARACTER_STARTER, characterStarter)
+        || !open(filename, schema, defaults, settingsSchema, settingsDefaults, characterStarter)) {
         return false;
     }
     return true;

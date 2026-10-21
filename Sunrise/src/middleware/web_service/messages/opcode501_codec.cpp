@@ -11,8 +11,9 @@ constexpr std::uint8_t kCharacterSoidWidth = 64;
 
 } // namespace
 
-/** Writes the echoed header, the shared status pair, the character id, and the trailer. */
+/** Writes the echoed header, the caller's status pair, the character id, and the trailer. */
 bool encode_response(const Message& message,
+                     const StatusResponse& status,
                      std::uint64_t characterSoid,
                      std::span<std::byte> output,
                      std::size_t& written) noexcept {
@@ -21,9 +22,6 @@ bool encode_response(const Message& message,
         return false;
     }
     encoding::bits::Writer writer = begin_response(message, output);
-    // The reply names a character the roster already holds, so no revision publishes it.
-    StatusResponse status{};
-    status.value = kNoFamily4Publication;
     // The id carries no presence bit or bias.
     bool encoded = status::write_fields(writer, ResponseShape::statusPair, status)
                    && writer.write(characterSoid, kCharacterSoidWidth)

@@ -21,6 +21,13 @@ namespace runtime {
 
 /** Row index meaning "no row"; the SDK never numbers a real row this high. */
 inline constexpr std::uint32_t kAbsentRuntimeRow = 0xFFFFFFFFU;
+/** Field type 1 walks one nested schema row. */
+inline constexpr std::uint8_t kNestedType = 1;
+/** Field type 34 carries its schema handle and reads through the selected-schema reader. */
+inline constexpr std::uint8_t kSelectedType = 34;
+/** Field types 12 and 35 are raw 64-bit words, read and written whole. */
+inline constexpr std::uint8_t kRaw64AliasType = 12;
+inline constexpr std::uint8_t kRaw64Type = 35;
 
 /** One runtime schema row supplied by the generated Activity SDK. */
 struct SchemaView final {
@@ -128,9 +135,6 @@ using ResolveCommandPayload = bool (*)(const void*, std::uint8_t, std::uint32_t&
 using ValidateRuntimeType = bool (*)(const void*, std::uint8_t) noexcept;
 using IsZeroBitRuntimeType = bool (*)(const void*, std::uint8_t) noexcept;
 
-/** Runtime field type whose body schema the resolver's custom schema supplies, not the wire. */
-inline constexpr std::uint8_t kRuntimeCustomSchemaType = 37;
-
 /** Borrowed adapters for runtime-selected reflection and command payload schemas. */
 struct RuntimeSchemaResolver final {
     const void* context{};
@@ -145,8 +149,6 @@ struct RuntimeSchemaResolver final {
     std::uint32_t firstFieldBit{};
     std::uint8_t (*canonicalType)(const void*, std::uint8_t) noexcept {};
     bool nativeCommandEmptyShortcut{};
-    /** A build-pinned custom reader resolves a body schema without a wire handle. */
-    std::uint32_t (*customSchema)(const void*, std::uint8_t) noexcept {};
 };
 
 /** Why one codec run stopped: complete, or the exact input it still needs. */

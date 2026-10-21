@@ -148,11 +148,13 @@ enum class EventKind : std::uint8_t {
     regionChanged = 40,
     /** A watched authored scene newly reported one of its output gates; from one msg 6 body. */
     sceneOutput = 41,
+    /** Validated type-30 level or explicit continuity invalidation. */
+    triggerState = 42,
 };
 
 /** Kinds are numbered without gaps, so the last one plus one is the count. */
 inline constexpr std::size_t kEventKindCount =
-    static_cast<std::size_t>(EventKind::sceneOutput) + 1U;
+    static_cast<std::size_t>(EventKind::triggerState) + 1U;
 
 /**
  * Terminal delivery outcome of one script-requested effect.
@@ -570,6 +572,10 @@ struct Event final {
     std::int32_t triggerValue{};
     /** True when the whole watched set is inside the volume. */
     bool triggerAll{};
+    /** For triggerState events: whether a level was reported, and the volume's occupancy. */
+    bool triggerAvailable{}, triggerOccupied{};
+    /** trigger_observation::Continuity of the report, for triggerState events. */
+    std::uint8_t triggerContinuity{};
     /** Health and shield fractions, for damageState events. Negative until published. */
     float damageHealth{-1.0F};
     /** Channel-2 observations retain raw levels and the exact admitted lifetime. */
@@ -618,6 +624,11 @@ struct Event final {
     bool squadObjectiveCostQualified{};
     /** Per-slot member counts the client published, for squadState events. */
     std::array<std::int32_t, kSquadSlotCapacity> squadSlotCounts{};
+    /** Spawn generation the squad Sense echoes from its placement Auth; not the record counter. */
+    std::int32_t squadSpawnGeneration{};
+    bool squadHasSpawnGeneration{};
+    /** An alive count was reported for this squad; until then the counts are zero placeholders. */
+    bool squadPopulationAvailable{};
     /** Alive members the client published. Six bits on the wire, so 0 through 63. */
     std::int32_t squadAliveCount{};
     /** Alive count this observation replaced, for entityDied events. */
@@ -632,6 +643,14 @@ struct Event final {
     std::uint8_t squadSlotOrdinal{};
     /** Client flag written on its actor death or removal path. The meaning is unproved. */
     bool squadRemovalFlag{};
+    /** Msg-6 record counter plus one; not a squad or actor lifetime identity. */
+    std::uint32_t senseGenerationPlusOne{};
+    bool hasSenseGeneration{};
+    /** First report of this squad or object generation; it never proves a death. */
+    bool initialObservation{};
+    /** Authored entry index and spawn-mask words, for objectState events. */
+    std::int32_t objectEntryIndex{};
+    std::array<std::uint32_t, 2> objectSpawnMask{};
     /** Activation token the authored scene echoed, for sceneFinished and sceneOutput events. */
     std::int32_t sceneActivationToken{};
     /** Output gate key the scene newly reported, for sceneOutput events. */
@@ -1006,11 +1025,41 @@ request_squad_objective(const state::activity::SessionBinding& binding,
                         std::uint64_t expectedActivityClientGeneration,
                         const ScriptableOutputReservation& reservation) noexcept;
 
-/** Queues one owned msg-6 prefix for the Activity Host service. */
-[[nodiscard]] bool submit_sense(const SenseInput& input) noexcept;
+/** Names the gate that declined one ingress submission. */
+enum class IngressRefusal : std::uint8_t {
+    /** The submission was queued. */
+    none,
+    /** The named session no longer matches a live binding. */
+    binding,
+    /** The submission carried no source generation to bind it to. */
+    generation,
+    /** The shared codec refused a bounded outer field. */
+    payload,
+    /** The pending-input ring held no free slot. */
+    queue,
+};
 
-/** Queues one owned, outer-valid client msg 19 for the Activity Host service. */
-[[nodiscard]] bool submit_incident(const IncidentInput& input) noexcept;
+/**
+ * Names the ingress gate that declined, for the skip diagnostic. Every name starts with
+ * `host_ingress_refused`.
+ * @param refusal Gate reported by one failed submission.
+ * @return Stable reason name.
+ */
+[[nodiscard]] const char* ingress_refusal_name(IngressRefusal refusal) noexcept;
+
+/**
+ * Queues one owned msg-6 prefix for the Activity Host service.
+ * @param input Owned prefix and the binding it arrived on.
+ * @return The gate that declined, or IngressRefusal::none once queued.
+ */
+[[nodiscard]] IngressRefusal submit_sense(const SenseInput& input) noexcept;
+
+/**
+ * Queues one owned, outer-valid client msg 19 for the Activity Host service.
+ * @param input Parsed incident and the binding it arrived on.
+ * @return The gate that declined, or IngressRefusal::none once queued.
+ */
+[[nodiscard]] IngressRefusal submit_incident(const IncidentInput& input) noexcept;
 
 /** Queues one committed client msg-22 numeric after-image for the Activity Host service. */
 [[nodiscard]] bool submit_client_state_change(const ClientStateChangeInput& input) noexcept;

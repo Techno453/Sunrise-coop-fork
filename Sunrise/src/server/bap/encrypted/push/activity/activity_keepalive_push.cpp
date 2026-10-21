@@ -268,6 +268,14 @@ bool consume_activity_keepalive(Session& session,
     // A committed region report is answered on each link whose delivered roster still holds
     // the wait bit. Each player owns its readiness independently of local web-service reports.
     const bool arrivalDue = active && session.activityRosterAwaitClientSync && incidentClientReady;
+    // A script-selected state revision that has not reached the client's roster. Nothing else
+    // makes a roster due for it, so it would otherwise wait for the next solicited report.
+    const MissionSeedLease& missionSeed = session.activityMissionSeed;
+    const bool missionSeedDue =
+        active && missionSeed.configured
+        && missionSeed.bindingGeneration == session.activity.bindingGeneration
+        && missionSeed.revision != missionSeed.publishedRevision
+        && !missionSeed.regionArrivalPending && client_region_ready(session, nullptr);
     // The region the client holds, which is the one its advertisement must describe. The pending
     // leg alone names the region behind the player after a z-leg switch, and advertising that
     // hands the client an ambassadorship for a region it has left.
@@ -392,8 +400,8 @@ bool consume_activity_keepalive(Session& session,
     if (!active
         || (!keepaliveDue && !regionChanged && !hostStateDue && !estateDue && !scriptableDue
             && !incidentDue && !authorityResetDue && !authorityQueryDue && !hostTeleportDue
-            && !retirementDue && !arrivalDue && !membershipDue && !missionAllocationDue
-            && !grantDue)) {
+            && !retirementDue && !arrivalDue && !membershipDue && !missionAllocationDue && !grantDue
+            && !missionSeedDue)) {
         return false;
     }
     touchesScratch = true;
@@ -409,11 +417,12 @@ bool consume_activity_keepalive(Session& session,
     // Held until the frame reaches the caller. Encoding alone does not spend the region trigger.
     std::int32_t stagedAdvertisedRegion = -1;
     bool stagedAdvertisedPrivate = false;
-    // Only a changed Host value, retirement or the arrival answer can publish a standalone roster.
+    // Only a changed Host value or mission state, retirement or the arrival answer can publish a
+    // standalone roster.
     if (!keepaliveDue && !regionChanged && !hostTeleportDue && !membershipDue) {
         bool appendedRoster = false;
         if (hostStateDue || estateDue || scriptableDue || retirementDue || arrivalDue
-            || missionAllocationDue || grantDue) {
+            || missionAllocationDue || grantDue || missionSeedDue) {
             appendedRoster = append_roster_notification(
                 session, scratch, key, nextSendNonce, scratch.framed, framedSize);
             published = appendedRoster;
@@ -494,7 +503,8 @@ bool consume_activity_keepalive(Session& session,
             published = appended || published;
             SecureZeroMemory(&plan, sizeof plan);
         }
-        if (appended || hostStateDue || scriptableDue || retirementDue || arrivalDue || grantDue) {
+        if (appended || hostStateDue || scriptableDue || retirementDue || arrivalDue || grantDue
+            || missionSeedDue) {
             published = append_roster_notification(
                             session, scratch, key, nextSendNonce, scratch.framed, framedSize)
                         || published;
@@ -665,7 +675,7 @@ bool consume_activity_keepalive(Session& session,
     const std::uint32_t reportedRevision = refresh.snapshot.revision;
     SecureZeroMemory(&refresh, sizeof refresh);
     if (appendedMembership || hostStateDue || estateDue || scriptableDue || retirementDue
-        || arrivalDue || grantDue) {
+        || arrivalDue || grantDue || missionSeedDue) {
         published = append_roster_notification(
                         session, scratch, key, nextSendNonce, scratch.framed, framedSize)
                     || published;

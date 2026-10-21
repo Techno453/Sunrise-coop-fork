@@ -9,6 +9,8 @@
 #include "../../middleware/web_service/messages/opcode402.h"
 #include "../../middleware/web_service/messages/opcode403.h"
 #include "../../middleware/web_service/messages/opcode406.h"
+#include "../../middleware/web_service/messages/opcode501_request_codec.h"
+#include "../../middleware/web_service/messages/opcode502.h"
 #include "../../middleware/web_service/messages/opcode504.h"
 #include "../../middleware/web_service/messages/opcode701/opcode701_codec.h"
 #include "../../middleware/web_service/messages/opcode801.h"
@@ -114,6 +116,56 @@ void select_character(const middleware::web_service::Message& message, Outcome& 
     }
     outcome.hasSelectedCharacter = true;
     outcome.selectedCharacterSoid = picked.characterSoid;
+}
+
+/**
+ * Saves the character an opcode-501 request describes, with its starter set and subclasses.
+ * Both writes share one save transaction, so a refusal leaves no trace.
+ * @param message Parsed create-character request.
+ * @param outcome Gets the roster change and the new id once both writes commit.
+ */
+void create_character(const middleware::web_service::Message& message, Outcome& outcome) noexcept {
+    namespace opcode501 = middleware::web_service::messages::opcode501;
+    opcode501::Request request{};
+    if (!opcode501::parse_request(message, request)) {
+        core::log::write(
+            core::log::Channel::server, core::log::Level::warn, "ev=ws501 stage=parse result=fail");
+        return;
+    }
+    state::investment::store::Transaction transaction;
+    std::uint64_t characterSoid = 0;
+    if (!transaction.ready()
+        || !state::create_character(request.characterClass,
+                                    request.gender,
+                                    request.race,
+                                    request.appearanceHeader,
+                                    characterSoid)
+        || !state::ensure_character_subclasses() || !transaction.commit()) {
+        core::log::write(core::log::Channel::server,
+                         core::log::Level::warn,
+                         "ev=ws501 stage=create result=fail");
+        return;
+    }
+    outcome.hasRosterChange = true;
+    outcome.createdCharacterSoid = characterSoid;
+}
+
+/**
+ * Removes the character an opcode-502 request names.
+ * @param message Parsed delete-character request.
+ * @param outcome Gets the roster change once the removal commits.
+ */
+void delete_character(const middleware::web_service::Message& message, Outcome& outcome) noexcept {
+    namespace opcode502 = middleware::web_service::messages::opcode502;
+    opcode502::Request request{};
+    if (!opcode502::parse_request(message, request)
+        || !state::delete_character(request.characterSoid)) {
+        core::log::write(core::log::Channel::server,
+                         core::log::Level::warn,
+                         "ev=ws502 stage=delete result=fail");
+        return;
+    }
+    outcome.hasRosterChange = true;
 }
 
 /** Reads the shared opcode-403/404 SOID descriptor through its codec. */
