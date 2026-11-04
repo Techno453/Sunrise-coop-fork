@@ -12,6 +12,8 @@ namespace sunrise::middleware::bap::activity_host_manager::request::selection {
 inline constexpr std::size_t kActivityManagerSkullCapacity = 16;
 /** The descriptor has one fixed 40-byte signed package-name field. */
 inline constexpr std::size_t kActivityManagerPackageNameCapacity = 40;
+/** Descriptor field 16 carries a 6-bit count of option pairs. */
+inline constexpr std::size_t kActivityManagerTailPairCapacity = 63;
 /**
  * Storage for one descriptor's exact bits, which another message replays as-is. With every
  * dynamic count at its largest the descriptor is 1,814 bits, and the common form is 372, so this
@@ -49,6 +51,10 @@ struct ActivityManagerSelection final {
     std::uint8_t skullCount{};
     /** Gameplay selections. Entries past skullCount stay zero. */
     std::array<ActivityManagerSkullValue, kActivityManagerSkullCapacity> skulls{};
+    /** Descriptor field 16's 13-bit option pairs, which select private-match options. */
+    std::array<std::uint16_t, kActivityManagerTailPairCapacity> tailPairs{};
+    std::uint8_t tailPairCount{};
+    bool hasTailPairs{};
     /** True when the optional arrival-bubble hash was present. */
     bool hasArrivalBubbleHash{};
     /** Unsigned arrival-bubble hash from the descriptor. */

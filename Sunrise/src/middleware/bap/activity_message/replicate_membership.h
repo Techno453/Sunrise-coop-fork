@@ -94,6 +94,8 @@ struct RegionLeg final {
 
 /** A real admitted player. Reservation alone supplies no transition or readiness state. */
 struct PeerMember final {
+    /** Native assignment (team partition) written into the peer's player blob. */
+    std::int8_t partition{};
     client_identity::ClientIdentity identity{};
     TransportReport transport{};
     RegionLeg currentLeg{};
@@ -123,6 +125,8 @@ static_assert(kRegionLegByteCount * 8 == kRegionLegBitCount);
 
 /** Inputs for one local-player membership snapshot. */
 struct MembershipSnapshot final {
+    /** Native assignment (team partition) written into the local player blob. */
+    std::int8_t partition{};
     /** Actual local row in this activity generation. Slot one belongs to the service host. */
     std::uint8_t localSlot{};
     client_identity::ClientIdentity identity{};

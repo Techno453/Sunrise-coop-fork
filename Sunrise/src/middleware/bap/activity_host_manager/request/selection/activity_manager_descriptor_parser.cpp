@@ -194,13 +194,12 @@ constexpr std::size_t kPairEntryWidth = 13;
 }
 
 /**
- * Skips both unknown descriptor-tail arrays, whatever their counts say. Nothing here is
- * published, so the bits only need to be present. The 6-bit and 1-bit counts run past the
- * schema storage, so a count that can be read is walked, not refused.
+ * Skips the unknown references and keeps the 13-bit option pairs that follow them.
+ * Storage covers every possible wire count. The descriptor's exact replay is unchanged.
  * @param reader Bounded MSB-first descriptor reader.
  * @return True when both presence markers, counts and payloads are complete.
  */
-[[nodiscard]] bool skip_tail(Reader& reader) noexcept {
+[[nodiscard]] bool read_tail(Reader& reader, ActivityManagerSelection& selection) noexcept {
     bool hasReferences = false;
     std::uint64_t referenceCount = 0;
     if (!read_presence(reader, hasReferences)
@@ -219,8 +218,19 @@ constexpr std::size_t kPairEntryWidth = 13;
     if (!hasPairs) {
         return true;
     }
-    return reader.read(kPairCountWidth, pairCount)
-           && reader.skip(static_cast<std::size_t>(pairCount) * kPairEntryWidth);
+    if (!reader.read(kPairCountWidth, pairCount)) {
+        return false;
+    }
+    for (std::size_t index = 0; index < pairCount; ++index) {
+        std::uint64_t value = 0;
+        if (!reader.read(kPairEntryWidth, value)) {
+            return false;
+        }
+        selection.tailPairs[index] = static_cast<std::uint16_t>(value);
+    }
+    selection.hasTailPairs = true;
+    selection.tailPairCount = static_cast<std::uint8_t>(pairCount);
+    return true;
 }
 
 } // namespace
@@ -229,7 +239,7 @@ constexpr std::size_t kPairEntryWidth = 13;
 bool parse(Reader& reader, ActivityManagerSelection& selection) noexcept {
     const std::size_t descriptorStart = reader.remaining_bits();
     return read_prefix(reader, selection) && read_destination(reader, descriptorStart, selection)
-           && skip_tail(reader);
+           && read_tail(reader, selection);
 }
 
 } // namespace sunrise::middleware::bap::activity_host_manager::request::selection

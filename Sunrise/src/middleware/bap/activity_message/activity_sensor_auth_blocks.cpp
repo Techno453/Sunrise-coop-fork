@@ -428,11 +428,12 @@ bool write_object_block(bits::Writer& writer,
     // them: the player key (this type-13) and the lifetime state (every type-17, because the
     // gate reads whichever registers first). Zeroing those strands the spawn.
     const bool spawnBearing = carriesPlayerKey || slotType == kSlotTypeLifetime;
-    const std::size_t body = override != nullptr
-                                 ? override->bitCount
-                                 : (emitAuth && (!missionSeedOnly || spawnBearing)
-                                        ? auth_body_bits(snapshot, slotType, carriesPlayerKey)
-                                        : 0);
+    const std::size_t body =
+        override != nullptr
+            ? override->bitCount
+            : (emitAuth && (!missionSeedOnly || spawnBearing)
+                   ? auth_body_bits(snapshot, slotType, carriesPlayerKey, key, slotIndex)
+                   : 0);
     // Sense adds its state flag, reset bit, complete delta and 32-bit counter.
     const std::size_t senseBits = sense != nullptr ? 2U + sense->bitCount + kKeyWidth : 0U;
     const std::size_t remainder = (emitAuth ? 2U : 0U) + (emitSense ? 1U : 0U) + body + senseBits;
@@ -449,7 +450,8 @@ bool write_object_block(bits::Writer& writer,
             encoded =
                 override != nullptr
                     ? write_packed(writer, *override)
-                    : write_auth_body(writer, snapshot, slotType, carriesPlayerKey, playerKey);
+                    : write_auth_body(
+                          writer, snapshot, slotType, carriesPlayerKey, playerKey, key, slotIndex);
         }
     }
     if (encoded && emitSense) {

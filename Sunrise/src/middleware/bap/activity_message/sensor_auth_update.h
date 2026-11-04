@@ -10,7 +10,9 @@
 #include "../../content/packages/schema/generated/tag_layout_808094_1.h"
 #include "../../encoding/bit_writer.h"
 #include "activity_patch_epoch_parser.h"
+#include "cinematic_record.h"
 #include "definition.h"
+#include "match_object_auth.h"
 #include "scoreboard_record.h"
 #include "sensor_message.h"
 #include "squad_auth_body.h"
@@ -139,6 +141,15 @@ struct ActivityFlags final {
     return true;
 }
 
+/** Native intro lifetime, which the readiness and landing barrier owns. */
+inline constexpr std::uint8_t kIntroLifetime = 2;
+/** Native partitions a participation's 5-bit assignment field can carry. */
+inline constexpr std::size_t kPartitionCount = 31;
+/** That field stores the native partition plus one, so -1 is unassigned. */
+inline constexpr std::uint8_t kPartitionWidth = 5;
+inline constexpr std::int32_t kPartitionBias = 1;
+inline constexpr std::int8_t kUnassignedPartition = -1;
+inline constexpr std::int8_t kLastPartition = static_cast<std::int8_t>(kPartitionCount - 1);
 /** The lifetime field stores its value plus one in four bits. */
 inline constexpr std::uint8_t kLifetimeWidth = 4;
 inline constexpr std::uint32_t kLifetimeBias = 1;
@@ -150,6 +161,18 @@ inline constexpr std::uint8_t kSlotAuthFlag = 2;
 inline constexpr std::uint32_t kMaximumSpawnSliceSet = 0x1FF;
 /** The unset spawn-set hash. An override carrying it disables the override it was meant to arm. */
 inline constexpr std::uint32_t kAbsentSpawnSetHash = kEmptyNameHash;
+
+/**
+ * Entries the hud_sensor's zone list holds: its `C80802db1` array (descriptor 0x3945DD0) is 16
+ * elements of 12 bytes from body `+0x10C`.
+ */
+inline constexpr std::size_t kHudZoneCapacity = 16;
+
+/** One objective zone the hud_sensor lists: a type-4 object slot of a published group. */
+struct HudZone final {
+    std::uint32_t group{};
+    std::uint16_t slot{};
+};
 
 /** One bubble handed to this client, as a change against its own per-bubble mirror. */
 struct Grant final {
@@ -251,6 +274,11 @@ struct Roster final {
 struct ParticipationSeat final {
     std::uint64_t playerKey{};
     std::uint16_t slotIndex{};
+    /** Team partition the match authority assigned this seat's player, if any. */
+    std::int8_t assignedPartition{-1};
+    bool hasAssignedPartition{};
+    /** Account-qualified scoreboard identity when the native registry key differs. */
+    std::uint64_t scoreboardPlayerKey{};
 };
 
 /** Everything one `sensor_auth_update` carries. */
@@ -280,6 +308,88 @@ struct Snapshot final {
     std::uint8_t lifetime{};
     /** Flags every participation record lists. */
     ActivityFlags activityFlags{};
+
+    /** Activity authority has retained a completion result; admits native postgame state 7. */
+    bool matchComplete{};
+    /**
+     * A match gives each player its team's faction (`auth_fields::team_faction`) in the
+     * participation body and names scoreboard teams by it; otherwise every player is faction 0.
+     */
+    bool partitionFactions{};
+    /** Mode-owned team count; keeps empty configured teams available to the native chooser. */
+    std::uint8_t matchTeamCount{};
+    /**
+     * Both participation respawn timers carry the inherit marker, in place of the darkness
+     * revive delay.
+     */
+    bool inheritRespawnTimers{};
+    /** Authority readiness/landing barrier owns native intro lifetime 2. */
+    bool matchIntro{};
+    /** The match facts below describe this body; false outside a match. */
+    bool hasMatchScores{};
+    /** Failed allocation; no successful match result is encoded. */
+    bool matchAborted{};
+    /** The match has an end reason; completion and postgame follow. */
+    bool matchFinished{};
+    /** Installed mode key of the match. */
+    std::uint32_t matchModeKey{};
+    /**
+     * Value of the lifetime's runtime setting `0xB3C1251B`, from which 0xBEA020 selects the
+     * objective HUD: the FNV-1 hash of a HUD name, or zero for none.
+     */
+    std::uint32_t matchObjectiveHud{};
+    std::array<cinematic_record::Command, cinematic_record::kCommandCapacity> matchCinematics{};
+    /** Type-4 objects the match spawns, such as capture zones, in the mode's authored order. */
+    std::array<match_object::Object, match_object::kCapacity> matchObjects{};
+    std::uint8_t matchObjectCount{};
+    /** Match revision the scores and statistics below reflect. */
+    std::uint32_t matchRevision{};
+    /** Revision moves the time recurrences made, as of matchRevision. */
+    std::uint32_t matchTimedRevisions{};
+    /** Simulation frames the published statistics have advanced through. */
+    std::uint64_t matchStatisticFrames{};
+    /** Player and team statistic columns of the mode's scoreboard config. */
+    std::uint32_t matchPlayerStatisticCount{};
+    std::uint32_t matchTeamStatisticCount{};
+    /** Match allocation this body belongs to. */
+    std::uint64_t matchAllocationRevision{};
+    /** Authority score and statistic columns of each tracked player. */
+    std::array<scoreboard_record::PlayerScore, scoreboard_record::kElementCount> matchScores{};
+    std::array<scoreboard_record::PlayerStatistics, scoreboard_record::kElementCount>
+        matchStatistics{};
+    /** The mode scores teams; team rows then carry `matchTeamScores` rather than member sums. */
+    bool matchTeamScoring{};
+    /** Retained team totals, keyed by team partition. */
+    std::array<scoreboard_record::TeamScore, scoreboard_record::kElementCount> matchTeamScores{};
+    /**
+     * Resolved match timer for slot type 18 (`activityTimerSensor`, schema `C80809919`).
+     * When false, the slot retains its existing bodyless declaration.
+     */
+    bool activityTimerActive{};
+
+    /** `SharedTimedState.minimum` is always 0; maximum comes from installed match options. */
+    std::uint64_t activityTimerMaximum{};
+    /** `SharedTimedState.remainingAtEpoch`. */
+    std::uint64_t activityTimerRemaining{};
+    /** `SharedTimedState.currentAtEpoch`, computed by the resolver as `maximum - remaining`. */
+    std::uint64_t activityTimerCurrentAtEpoch{};
+    /** `SharedTimedState.epoch` in the shared activity clock. */
+    std::uint64_t activityTimerEpoch{};
+    /** `SharedTimedState.rate`. */
+    float activityTimerRate{};
+    /** Type 18's own `tailValue` (its `tailFlag` is always written false). */
+    std::int32_t activityTimerTailValue{};
+    /**
+     * The HUD shows the match clock: the player-key group's hud_sensor carries the named float
+     * the timer group's visibility tests. Without it the timer reaches the widget but stays hidden.
+     */
+    bool matchClockVisible{};
+    /**
+     * Objective zones the player-key group's hud_sensor lists, in the mode's authored order. The
+     * Control record store 0xBEAF30 resolves each to its zone and letters it from the zone's index.
+     */
+    std::array<HudZone, kHudZoneCapacity> hudZones{};
+    std::uint8_t hudZoneCount{};
     bool hasGrant{};
     bool hasRegion{};
     bool hasSpawnOverride{};
@@ -462,10 +572,15 @@ bubble_bits(std::span<const BubbleSubBlock> subBlocks) noexcept {
  * @param snapshot Message input, which decides the type-13 body width.
  * @param slotType Slot type from the group's slot array.
  * @param carriesPlayerKey True for the one type-13 block that binds the player.
+ * @param key Registry key of the slot's group, which names its match object, clip or HUD.
+ * @param slotIndex Slot index within that group.
  * @return Body bits, or zero for a seed-only block.
  */
-[[nodiscard]] std::size_t
-auth_body_bits(const Snapshot& snapshot, std::uint8_t slotType, bool carriesPlayerKey) noexcept;
+[[nodiscard]] std::size_t auth_body_bits(const Snapshot& snapshot,
+                                         std::uint8_t slotType,
+                                         bool carriesPlayerKey,
+                                         std::uint32_t key = 0,
+                                         std::uint16_t slotIndex = 0) noexcept;
 
 /**
  * Writes one slot's auth body.
@@ -479,7 +594,9 @@ auth_body_bits(const Snapshot& snapshot, std::uint8_t slotType, bool carriesPlay
                                    const Snapshot& snapshot,
                                    std::uint8_t slotType,
                                    bool carriesPlayerKey,
-                                   std::uint64_t playerKey = 0) noexcept;
+                                   std::uint64_t playerKey = 0,
+                                   std::uint32_t key = 0,
+                                   std::uint16_t slotIndex = 0) noexcept;
 
 /**
  * Writes one per-object state block.

@@ -1,3 +1,4 @@
+#include <array>
 #include <bit>
 #include <limits>
 
@@ -12,6 +13,7 @@
 #include "../../content/packages/schema/generated/tag_classes_808099.h"
 #include "../../content/packages/schema/generated/tag_classes_80809a.h"
 #include "../../content/packages/schema/generated/tag_classes_80809e.h"
+#include "capture_zone_auth.h"
 #include "damage_monitor_auth.h"
 #include "ghost_link_auth.h"
 #include "interactable_object_auth.h"
@@ -83,15 +85,12 @@ constexpr std::uint32_t kDamage = damage_monitor::kSenseSchema;
 /** Registered object replies: the interaction latch and the ownership key. */
 constexpr std::uint32_t kInteractionReply = interactable_object::kInteractionReply,
                         kOwnershipReply = interactable_object::kOwnershipReply;
-/**
- * The capture-plate reply, sent once the plate Auth exists: two six-bit values at bias three, a
- * flag, two signed revisions, then an optional word and an optional 4-bit unit real.
- * Ordinals are recorded unnamed; their meanings are not recovered.
- */
-constexpr std::uint32_t kCapturePlateReply = generated::C80804df6::kClass;
-constexpr std::uint8_t kPlateSmallWidth = 6, kPlateSmallStorage = 8;
-constexpr std::int32_t kPlateSmallBias = 3;
-constexpr std::uint8_t kPlateUnitWidth = 4;
+/** Capture component reply (0xED6960): factions, contest and owner revisions, progress. */
+constexpr std::uint32_t kCaptureReply = capture_zone::kComponentReply;
+constexpr std::uint8_t kFactionWidth = auth_fields::kFactionWidth;
+constexpr std::int32_t kFactionBias = auth_fields::kFactionBias;
+constexpr std::uint8_t kCaptureProgressWidth = capture_zone::kReplyProgressWidth;
+constexpr std::uint32_t kFactionReply = generated::C80807e63::kClass;
 /** Counted lists inside the participation body. */
 constexpr std::uint64_t kPlayerScalarCountMaximum = 4, kPlayerKeyCountMaximum = 32;
 /** Quantization ceilings the combatant reals carry in their own descriptors. */
@@ -407,7 +406,86 @@ real_value(std::uint64_t raw, std::uint8_t width, std::uint32_t maximumBits) noe
                ? NativeStatus::complete
                : NativeStatus::malformed;
 }
-/** Decodes an object and accepts only the registered interaction and ownership replies. */
+/** Reads one object reply body after its class key; `occurrence` is its list position. */
+using ReplyDecoder = bool (*)(Reader& reader, Values& values, std::uint32_t occurrence) noexcept;
+
+/** The interaction latch and the revision that set it. */
+[[nodiscard]] bool
+decode_interaction_reply(Reader& reader, Values& values, std::uint32_t occurrence) noexcept {
+    return read_bool(reader, values, kInteractionReply, 0, false, occurrence)
+           && read_signed(reader,
+                          values,
+                          kInteractionReply,
+                          1,
+                          32,
+                          32,
+                          (std::numeric_limits<std::int32_t>::min)(),
+                          false,
+                          occurrence);
+}
+
+/** The owner key is always written, zero when nobody holds the object. */
+[[nodiscard]] bool
+decode_ownership_reply(Reader& reader, Values& values, std::uint32_t occurrence) noexcept {
+    return read_bool(reader, values, kOwnershipReply, 0, false, occurrence)
+           && read_unsigned(reader, values, kOwnershipReply, 1, 64, false, occurrence);
+}
+
+/**
+ * Owner, contested, contest and owner revisions, progressing faction, then the optional timer word
+ * and progress.
+ */
+[[nodiscard]] bool
+decode_capture_reply(Reader& reader, Values& values, std::uint32_t occurrence) noexcept {
+    constexpr auto kRevisionBias = (std::numeric_limits<std::int32_t>::min)();
+    return read_signed(
+               reader, values, kCaptureReply, 0, kFactionWidth, 8, kFactionBias, false, occurrence)
+           && read_bool(reader, values, kCaptureReply, 1, false, occurrence)
+           && read_signed(
+               reader, values, kCaptureReply, 2, 32, 32, kRevisionBias, false, occurrence)
+           && read_signed(
+               reader, values, kCaptureReply, 3, 32, 32, kRevisionBias, false, occurrence)
+           && read_signed(
+               reader, values, kCaptureReply, 4, kFactionWidth, 8, kFactionBias, false, occurrence)
+           && read_unsigned(reader, values, kCaptureReply, 5, 32, true, occurrence)
+           && read_real(reader,
+                        values,
+                        kCaptureReply,
+                        6,
+                        kCaptureProgressWidth,
+                        true,
+                        occurrence,
+                        kUnitMaximumBits);
+}
+
+/** The objective's native faction; its authoritative role still comes from the match state. */
+[[nodiscard]] bool
+decode_faction_reply(Reader& reader, Values& values, std::uint32_t occurrence) noexcept {
+    return read_signed(
+        reader, values, kFactionReply, 0, kFactionWidth, 8, kFactionBias, false, occurrence);
+}
+
+/** One registered object reply: the class key its component writes and the reader of its body. */
+struct ReplyClass final {
+    std::uint32_t key{};
+    ReplyDecoder decode{};
+    /** Status of a body the object's budget cuts off. */
+    NativeStatus cutOff{NativeStatus::malformed};
+};
+
+/**
+ * Object replies the decoder accepts. A match object whose component answers in the object Sense
+ * registers its reply class here.
+ */
+constexpr auto kReplyClasses = std::to_array<ReplyClass>({
+    {kInteractionReply, &decode_interaction_reply},
+    // A capture reply read past the budget falls back to the old skip, never the packet.
+    {kCaptureReply, &decode_capture_reply, NativeStatus::unsupported},
+    {kOwnershipReply, &decode_ownership_reply},
+    {kFactionReply, &decode_faction_reply},
+});
+
+/** Decodes an object and accepts only the registered replies. */
 [[nodiscard]] NativeStatus decode_object(Reader& reader, Values& values) noexcept {
     if (!read_signed(
             reader, values, kObject, 0, 32, 32, (std::numeric_limits<std::int32_t>::min)(), false)
@@ -445,65 +523,18 @@ real_value(std::uint64_t raw, std::uint8_t width, std::uint32_t maximumBits) noe
         if (!reader.read(32, schema)) {
             return NativeStatus::malformed;
         }
-        if (schema == kInteractionReply) {
-            // The interaction latch and the revision that set it.
-            if (!read_bool(reader, values, kInteractionReply, 0, false, index)
-                || !read_signed(reader,
-                                values,
-                                kInteractionReply,
-                                1,
-                                32,
-                                32,
-                                (std::numeric_limits<std::int32_t>::min)(),
-                                false,
-                                index)) {
-                return NativeStatus::malformed;
+        const ReplyClass* reply = nullptr;
+        for (const auto& candidate : kReplyClasses) {
+            if (candidate.key == schema) {
+                reply = &candidate;
+                break;
             }
-        } else if (schema == kOwnershipReply) {
-            // The owner key is always written, zero when nobody holds the object.
-            if (!read_bool(reader, values, kOwnershipReply, 0, false, index)
-                || !read_unsigned(reader, values, kOwnershipReply, 1, 64, false, index)) {
-                return NativeStatus::malformed;
-            }
-        } else if (schema == kCapturePlateReply) {
-            constexpr std::int32_t kRevisionBias = (std::numeric_limits<std::int32_t>::min)();
-            if (!read_signed(reader,
-                             values,
-                             kCapturePlateReply,
-                             0,
-                             kPlateSmallWidth,
-                             kPlateSmallStorage,
-                             kPlateSmallBias,
-                             false,
-                             index)
-                || !read_bool(reader, values, kCapturePlateReply, 1, false, index)
-                || !read_signed(
-                    reader, values, kCapturePlateReply, 2, 32, 32, kRevisionBias, false, index)
-                || !read_signed(
-                    reader, values, kCapturePlateReply, 3, 32, 32, kRevisionBias, false, index)
-                || !read_signed(reader,
-                                values,
-                                kCapturePlateReply,
-                                4,
-                                kPlateSmallWidth,
-                                kPlateSmallStorage,
-                                kPlateSmallBias,
-                                false,
-                                index)
-                || !read_unsigned(reader, values, kCapturePlateReply, 5, 32, true, index)
-                || !read_real(reader,
-                              values,
-                              kCapturePlateReply,
-                              6,
-                              kPlateUnitWidth,
-                              true,
-                              index,
-                              kUnitMaximumBits)) {
-                // A plate read past the budget falls back to the old skip, never the packet.
-                return NativeStatus::unsupported;
-            }
-        } else {
+        }
+        if (reply == nullptr) {
             return NativeStatus::unsupported;
+        }
+        if (!reply->decode(reader, values, index)) {
+            return reply->cutOff;
         }
     }
     return NativeStatus::complete;

@@ -42,8 +42,10 @@ constexpr std::uint8_t kPlayerBlobPadBits = 3;
 constexpr std::uint8_t kPlayerBlobLengthWidth = 14;
 /** The blob writes the name twice, two bytes per unit, so one character adds four bytes. */
 constexpr std::uint32_t kPlayerBlobNameByteCount = 4;
-/** Native A.P2 must match participation record +56: logical zero at bias one. */
-constexpr std::uint8_t kPlayerAssignmentWire = 1;
+using client_authoritative_data::kMaximumAssignment;
+using client_authoritative_data::kMinimumAssignment;
+using client_authoritative_data::kPlayerAssignmentBias;
+using client_authoritative_data::kPlayerAssignmentWidth;
 /** The remote member's player-state field zero carries the native-view gate. */
 constexpr std::uint8_t kRemoteViewGate = 0x10;
 /** Player-state field zero is a six-bit scalar. */
@@ -102,7 +104,11 @@ template <std::size_t Size>
 [[nodiscard]] bool write_player_blob(encoding::bits::Writer& writer,
                                      const client_identity::ClientIdentity& identity,
                                      std::span<const std::uint16_t> nameUnits,
-                                     bool named) noexcept {
+                                     bool named,
+                                     std::int8_t assignment) noexcept {
+    if (assignment < kMinimumAssignment || assignment > kMaximumAssignment) {
+        return false;
+    }
     const auto name = [&]() noexcept {
         if (!writer.write(named ? 1U : 0U, 1)) {
             return false;
@@ -121,9 +127,11 @@ template <std::size_t Size>
     // bit, the 6-bit assignment, two clear bits, the name again, five clear bits, a set presence
     // bit, the account and character SOIDs, and three zero tail pad bits.
     return writer.write(1, 3) && writer.write(0, 1) && name() && writer.write(1, 1)
-           && writer.write(kPlayerAssignmentWire, 6) && writer.write(0, 2) && name()
-           && writer.write(0, 5) && writer.write(1, 1) && writer.write(identity.accountSoid, 64)
-           && writer.write(identity.field5, 64) && writer.write(0, kPlayerBlobPadBits);
+           && writer.write(static_cast<std::uint32_t>(assignment + kPlayerAssignmentBias),
+                           kPlayerAssignmentWidth)
+           && writer.write(0, 2) && name() && writer.write(0, 5) && writer.write(1, 1)
+           && writer.write(identity.accountSoid, 64) && writer.write(identity.field5, 64)
+           && writer.write(0, kPlayerBlobPadBits);
 }
 
 /**
@@ -135,6 +143,9 @@ template <std::size_t Size>
  * @param remote Optional remote-view row. Null writes the local member's shorter field set.
  * @param activityHostId Host id for field 4, which the client itself always sends as zero.
  * @param fireteamActivityHostId Field 3 of the local row. Remote-view and peer rows name their own.
+ * @param peer Optional human peer row, which supplies the name and transport fields.
+ * @param localName The local member's name units when `peer` is null.
+ * @param assignment Native partition the participation record must agree with.
  * @return True when fields 3, 4, 5 and 14 and all presence bits fit.
  */
 [[nodiscard]] bool write_player_identity(encoding::bits::Writer& writer,
@@ -143,7 +154,8 @@ template <std::size_t Size>
                                          std::uint64_t activityHostId,
                                          std::uint64_t fireteamActivityHostId,
                                          const PeerMember* peer,
-                                         std::span<const std::uint16_t> localName) noexcept {
+                                         std::span<const std::uint16_t> localName,
+                                         std::int8_t assignment) noexcept {
     const bool named = peer != nullptr ? peer->hasName : !localName.empty();
     const auto nameUnits =
         peer != nullptr ? std::span(peer->name).first(peer->nameLength) : localName;
@@ -209,7 +221,7 @@ template <std::size_t Size>
                     kPlayerBlobByteCount
                         + (named ? kPlayerBlobNameByteCount * (nameUnits.size() + 1U) : 0U),
                     kPlayerBlobLengthWidth)
-                || !write_player_blob(writer, identity, nameUnits, named))) {
+                || !write_player_blob(writer, identity, nameUnits, named, assignment))) {
             return false;
         }
     }
@@ -280,7 +292,8 @@ template <std::size_t Size>
                                 std::uint64_t activityHostId,
                                 std::uint64_t fireteamActivityHostId,
                                 const PeerMember* peer = nullptr,
-                                std::span<const std::uint16_t> localName = {}) noexcept {
+                                std::span<const std::uint16_t> localName = {},
+                                std::int8_t assignment = 0) noexcept {
     const std::uint32_t field1Wire = std::bit_cast<std::uint32_t>(identity.field1) + kField1Bias;
     const std::uint32_t field2Wire = std::bit_cast<std::uint32_t>(identity.field2) + kField2Bias;
     return writer.write(1, 1) && write_member_key(writer, identity.memberKey)
@@ -288,8 +301,14 @@ template <std::size_t Size>
            && writer.write(identity.field3, 64) && writer.write(identity.accountSoid, 64)
            && writer.write(identity.field5, 64) && writer.write(identity.field6, 64)
            && writer.write(1, 1) && writer.write(1, 1)
-           && write_player_identity(
-               writer, identity, remote, activityHostId, fireteamActivityHostId, peer, localName)
+           && write_player_identity(writer,
+                                    identity,
+                                    remote,
+                                    activityHostId,
+                                    fireteamActivityHostId,
+                                    peer,
+                                    localName,
+                                    assignment)
            && (peer != nullptr ? write_peer_transition(writer, *peer)
                                : write_member_transition(writer, currentLeg, pendingLeg, syncToken))
            && writer.write(0, 1) && writer.write(0, 1) && writer.write(1, 1)
@@ -353,7 +372,8 @@ template <std::size_t Size>
 bool valid(const MembershipSnapshot& snapshot) noexcept {
     namespace authoritative = client_authoritative_data;
     if (snapshot.localSlot >= kMemberCount || snapshot.localSlot == kServiceHostSlot
-        || snapshot.localNameLength > snapshot.localName.size()) {
+        || snapshot.localNameLength > snapshot.localName.size()
+        || snapshot.partition < kMinimumAssignment || snapshot.partition > kMaximumAssignment) {
         return false;
     }
     for (std::size_t i = 0; i < snapshot.localNameLength; ++i) {
@@ -372,6 +392,7 @@ bool valid(const MembershipSnapshot& snapshot) noexcept {
             return false;
         }
         if (!peer.identity.memberKey || !peer.identity.accountSoid || !peer.identity.field5
+            || peer.partition < kMinimumAssignment || peer.partition > kMaximumAssignment
             || peer.identity.field1 < kField1Minimum || peer.identity.field1 > kField1Maximum
             || peer.nameLength > peer.name.size()
             || (peer.transport.hasFlags
@@ -420,7 +441,8 @@ bool write_member_table(encoding::bits::Writer& writer,
                                    snapshot.activityHostId,
                                    snapshot.fireteamActivityHostId,
                                    nullptr,
-                                   std::span(snapshot.localName).first(snapshot.localNameLength));
+                                   std::span(snapshot.localName).first(snapshot.localNameLength),
+                                   snapshot.partition);
         } else if (slot == 1 && snapshot.remoteViewMember.present) {
             encoded = write_member(writer,
                                    snapshot.remoteViewMember.identity,
@@ -439,7 +461,9 @@ bool write_member_table(encoding::bits::Writer& writer,
                                    0,
                                    snapshot.activityHostId,
                                    snapshot.fireteamActivityHostId,
-                                   peer);
+                                   peer,
+                                   {},
+                                   peer->partition);
         } else {
             encoded = writer.write(0, kAbsentMemberBitCount);
         }
