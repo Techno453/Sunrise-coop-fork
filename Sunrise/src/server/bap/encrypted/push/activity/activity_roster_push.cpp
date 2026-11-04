@@ -24,6 +24,7 @@
 #include "../../../../gameplay/peer/peer_transport.h"
 #include "../../../../gameplay/squad_entity_retirement.h"
 #include "../../../activity_mission_seed_lease.h"
+#include "activity_match_publication.h"
 #include "activity_member_departure_push.h"
 #include "activity_member_roster.h"
 #include "activity_notification_frame.h"
@@ -95,6 +96,9 @@ void refuse_roster_outputs(Session& session,
                            bool ownsPending,
                            server::activity::host::OutputStatus status) noexcept {
     const std::uint64_t generation = session.activity.bindingGeneration;
+    if (status != server::activity::host::OutputStatus::waitingForEpoch) {
+        ++session.activityRosterRefusals;
+    }
     if (ownsPending) {
         server::activity::host::note_scriptable_attempt(scriptableSource.activity.session,
                                                         scriptableSource.activity.bindingGeneration,
@@ -195,6 +199,21 @@ owner_pending_scriptable(const Session& link,
     return server::activity::host::pending_scriptable_override_for_activity_client(
                owner.activity.session, owner.activity.bindingGeneration, output)
            && body_carried_here(link, &owner, output);
+}
+
+/** The match facts one built body carries, as its delivery commits them. */
+[[nodiscard]] MatchFacts body_match_facts(const Session& session,
+                                          const message::Snapshot& snapshot) noexcept {
+    return {.bindingGeneration = session.activity.bindingGeneration,
+            .allocation = snapshot.matchAllocationRevision,
+            .statisticFrames = snapshot.matchStatisticFrames,
+            .revision = snapshot.matchRevision,
+            .timedRevisions = snapshot.matchTimedRevisions,
+            .phase = snapshot.lifetime,
+            .finalScores =
+                snapshot.matchFinished && !snapshot.matchComplete && snapshot.hasScoreboard,
+            .scores = snapshot.hasMatchScores && snapshot.hasScoreboard,
+            .aborted = snapshot.matchAborted};
 }
 
 } // namespace
@@ -608,14 +627,16 @@ bool append_roster_notification(
         SecureZeroMemory(&initialNonce, sizeof initialNonce);
         return false;
     }
-    // Ticks since this public session's join result; a private session's clock never starts, so
-    // its value stays zero, the only value the heartbeat-carrying private link has accepted.
+    // A match keeps its own clock. Otherwise the ticks count from this public session's join
+    // result; a private session's clock never starts, so its value stays zero, the only value the
+    // heartbeat-carrying private link has accepted.
     bool encoded =
-        server::activity::activity_clock_wire_ticks(session.activity.session.sessionId,
-                                                    session.activity.session.createdRevision,
-                                                    GetTickCount64(),
-                                                    false,
-                                                    snapshot.activityTime)
+        (snapshot.matchClock
+         || server::activity::activity_clock_wire_ticks(session.activity.session.sessionId,
+                                                        session.activity.session.createdRevision,
+                                                        GetTickCount64(),
+                                                        false,
+                                                        snapshot.activityTime))
         && message::encode_sensor_auth_update(snapshot, scratch.responseBody, messageSize);
 
     // Only a body that cannot be built is refused. A full frame or a held purge is tried again.
@@ -711,6 +732,9 @@ bool append_roster_notification(
             session.activityPublicOwner.estateRevision = ownerState.estateRevision;
             session.activityPublicOwner.dialogueRevision = ownerState.dialogueRevision;
         }
+        // It holds the match facts too. A revision the body does not show (the revision is not
+        // on the wire) would otherwise stay due and rebuild this same body on every retry.
+        commit_match_facts(session, body_match_facts(session, snapshot));
         report_roster_push(
             session, snapshot, name, 0, kNoGrant, RosterOutcome::unchanged, bodyHash, forced);
         return false;
@@ -859,6 +883,15 @@ bool append_roster_notification(
                 break;
             }
         }
+        const MatchFacts match = body_match_facts(session, snapshot);
+        session.activityRosterStaged.matchAborted = match.aborted;
+        session.activityRosterStaged.finalScores = match.finalScores;
+        session.activityRosterStaged.hasMatchScores = match.scores;
+        session.activityRosterStaged.matchRevision = match.revision;
+        session.activityRosterStaged.matchTimedRevisions = match.timedRevisions;
+        session.activityRosterStaged.matchStatisticFrames = match.statisticFrames;
+        session.activityRosterStaged.matchAllocationRevision = match.allocation;
+        session.activityRosterStaged.matchPhase = match.phase;
         session.activityRosterStaged.staged = true;
         stage_roster_body_record(session, std::span(scratch.responseBody).first(messageSize));
     }
@@ -1185,6 +1218,8 @@ void commit_staged_roster(Session& session) noexcept {
     if (session.activityRosterStaged.peerLeave) {
         session.activityLeftGeneration = session.activity.bindingGeneration;
     }
+    // Match phases settle only on a delivered body, like every other roster cursor above.
+    commit_match_publication(session, session.activityRosterStaged);
     session.activityRosterStaged = {};
 }
 

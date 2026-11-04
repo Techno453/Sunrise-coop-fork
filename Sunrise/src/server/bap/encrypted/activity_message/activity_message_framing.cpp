@@ -1,3 +1,5 @@
+#include <Windows.h>
+
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -15,9 +17,12 @@
 #include "../../../../middleware/bap/activity_message/player_trigger_incident.h"
 #include "../../../../middleware/bap/activity_message/sense_observation_packet.h"
 #include "../../../../middleware/bap/activity_message/sense_update.h"
+#include "../../../../middleware/bap/activity_message/sensor_sense_update.h"
 #include "../../../../state/activity/bubble_authority/runtime.h"
+#include "../../../../state/activity/match_state/runtime.h"
 #include "../../../../state/activity/member_context.h"
 #include "../../../../state/activity_sdk/runtime.h"
+#include "../push/activity/activity_match_events.h"
 #include "activity_message_route_internal.h"
 
 namespace sunrise::server::bap::encrypted::activity_message {
@@ -414,6 +419,15 @@ bool frame_only(const ActivityClientBinding& binding,
         input.decoded = parsedSense.decoded;
         input.hasFirstObject = parsedSense.hasFirstObject;
         input.heldBubbles = held_bubbles(binding);
+        service::sensor_sense_update::Update matchSense{};
+        if (service::sensor_sense_update::parse(request.payload, matchSense)) {
+            const std::uint64_t member = state::activity::member_context().memberKey;
+            const std::uint64_t now = GetTickCount64();
+            state::activity::match_state::observe_participation(
+                binding.session.sessionId, member, matchSense, now);
+            state::activity::match_state::observe_named_statistics(
+                binding.session.sessionId, member, matchSense);
+        }
         // A public link's report on its owner's groups is the owner's own input, as the same
         // report on the private link would be. The parsed copy holds that part.
         const std::size_t moved =
@@ -435,6 +449,27 @@ bool frame_only(const ActivityClientBinding& binding,
             submit_sense_input(input, request);
         }
     } else if (isIncident && framed.verdict == store::Verdict::framed) {
+        std::array<std::byte, service::incident::kMaximumBodyBytes> canonical{};
+        std::size_t size{};
+        std::uint32_t schema{};
+        if (service::incident::prepare_peer_relay(request.payload, canonical, size, schema)) {
+            const auto body = std::span(canonical).first(size);
+            state::activity::match_state::observe_cinematic(
+                binding.session.sessionId,
+                state::activity::member_context().memberKey,
+                body,
+                GetTickCount64());
+            state::activity::match_state::observe_incident(
+                binding.session.sessionId,
+                state::activity::member_context().memberKey,
+                body,
+                GetTickCount64());
+            state::activity::match_state::State match{};
+            if (state::activity::match_state::read(binding.session.sessionId, match)) {
+                push::activity::queue_match_event(
+                    binding, state::activity::member_context().memberKey, body);
+            }
+        }
         server::activity::host::IncidentInput input{};
         input.binding = binding.session;
         input.incident = parsedIncident;

@@ -154,6 +154,9 @@ struct RosterGroupLease {
 inline constexpr std::size_t kRosterGroupLeaseCapacity =
     middleware::bap::activity_message::sensor_auth_update::kPublishedGroupCapacity;
 
+/** Match incident bodies one link queues until its next notice batch. */
+inline constexpr std::size_t kMatchEventCapacity = 16;
+
 /** Squads one grant body hands to its recipient; more than this keep their native start. */
 inline constexpr std::size_t kHandoverSquadCapacity = 128;
 
@@ -262,6 +265,21 @@ struct RosterPublication {
     bool awaitClientSync{};
     /** Set while a roster body is staged and its outcome is undecided. */
     bool staged{};
+    /** The body carries a finished match's final live scores. */
+    bool finalScores{};
+    /** The body carries match scores; the match facts below then describe it. */
+    bool hasMatchScores{};
+    bool matchAborted{};
+    /** Lifetime the body publishes. */
+    std::uint8_t matchPhase{};
+    /** Match revision the body's scoreboard reflects. */
+    std::uint32_t matchRevision{};
+    /** Revision moves the time recurrences made, as of matchRevision. */
+    std::uint32_t matchTimedRevisions{};
+    /** Simulation frames the body's statistics advanced through. */
+    std::uint64_t matchStatisticFrames{};
+    /** Match allocation the body belongs to. */
+    std::uint64_t matchAllocationRevision{};
 };
 
 /** Compact retained squad body; shared target fields and the generated group live on its group. */
@@ -584,6 +602,55 @@ struct Session {
     RosterPublication activityRosterStaged{};
     /** Last complete msg-5 roster known to have reached this exact connection generation. */
     RosterDecodeMap activityRosterDecode{};
+    /** One peer incident body queued for relay to this link. */
+    struct MatchEvent final {
+        std::array<std::byte, middleware::bap::activity_message::incident::kMaximumBodyBytes>
+            body{};
+        std::size_t size{};
+    };
+    /** Peer incidents waiting for this link's next frame, oldest first. */
+    std::array<MatchEvent, kMatchEventCapacity> activityMatchEvents{};
+    /** Binding generation the queue belongs to; another binding empties it. */
+    std::uint64_t activityMatchEventGeneration{};
+    std::size_t activityMatchEventCount{};
+    /** Queued incidents the staged frame carries, removed once it is delivered. */
+    std::size_t activityMatchEventsStaged{};
+    /** Tick count after which this link may build its next match roster or notice batch. */
+    std::uint64_t activityMatchDueTick{};
+    /** Authority score notices the staged frame carries, committed once it is delivered. */
+    state::activity::match_state::NoticeBatch activityMatchNoticesStaged{};
+    /** Final live scores this link received, with the binding, revision and allocation. */
+    bool activityFinalScoresPublished{};
+    std::uint64_t activityFinalScoreBindingGeneration{};
+    /** Last delivered match body: its binding, allocation, revision and lifetime. */
+    bool activityMatchPublished{};
+    bool activityMatchAborted{};
+    std::uint64_t activityMatchBindingGeneration{};
+    std::uint64_t activityMatchAllocation{};
+    std::uint32_t activityMatchRevision{};
+    std::uint8_t activityMatchPhase{};
+    std::uint32_t activityFinalScoreRevision{};
+    std::uint64_t activityFinalScoreAllocation{};
+    /**
+     * Time-recurrence revision moves and statistic frames of the delivered scoreboard, so a change
+     * made only by the per-frame time programs waits for the timed refresh instead of the cadence.
+     */
+    std::uint32_t activityMatchTimedRevisions{};
+    std::uint64_t activityMatchStatisticFrames{};
+    /** Roster bodies this link could not build; a keepalive compares it across one attempt. */
+    std::uint32_t activityRosterRefusals{};
+    /** Match facts committed on this link; a keepalive compares it across one attempt. */
+    std::uint32_t activityMatchCommits{};
+    /** A match roster this link could not build, and the revisions it was built for. */
+    struct MatchRefusal final {
+        bool recorded{};
+        std::uint64_t bindingGeneration{};
+        std::uint64_t allocation{};
+        std::uint32_t revision{};
+        std::uint64_t hostRevision{};
+    };
+    /** Not built again until the binding, the match allocation or revision, or Host moves. */
+    MatchRefusal activityMatchRefusal{};
     /** Delivered squad Auth bodies, all re-emitted so phase-2 reset cannot clear any slot. */
     SquadOverrideLease activitySquadOverride{};
     /** Generated selected-state roster lease. Disabled until an operator enables its SDK row. */

@@ -155,6 +155,9 @@ struct RegionState final {
  * `region` is the pending leg: the region it is loading, or the one behind a z-leg switch.
  */
 struct AuthoritativeUpdate final {
+    /** Native assignment (team partition) the client's player blob reported, if any. */
+    std::int8_t assignedPartition{-1};
+    bool hasAssignedPartition{};
     SpawnState spawn{};
     TeleportState teleport{};
     RegionState currentRegion{};
@@ -184,6 +187,9 @@ struct Snapshot final {
 
 /** Mutable membership fields owned by one activity session. */
 struct MembershipState final {
+    /** Last native assignment (team partition) this member reported. */
+    std::int8_t assignedPartition{-1};
+    bool hasAssignedPartition{};
     Identity identity{};
     SpawnState spawn{};
     TeleportState teleport{};

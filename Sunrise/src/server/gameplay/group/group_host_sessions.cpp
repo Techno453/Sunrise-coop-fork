@@ -5,11 +5,14 @@
 #include <array>
 #include <limits>
 #include <mutex>
+#include <string_view>
 
 #include "../../../core/threading/srw_lock.h"
 #include "../../../middleware/bap/activity_message/replicate_membership.h"
 #include "../../../state/activity/destination/activity_destination_public.h"
+#include "../../../state/activity/match_state/runtime.h"
 #include "../../../state/activity/runtime.h"
+#include "../../../state/build_data/activity_rules/runtime.h"
 #include "../endpoint/gameplay_endpoint.h"
 #include "../gameplay_log.h"
 
@@ -443,6 +446,40 @@ void snapshot_host_sessions(std::span<HostSessionRow> output, std::size_t& count
     ReleaseSRWLockShared(&g_hostSessionLock);
 }
 
+namespace {
+/** Mode name logged for an activity whose installed mode has no definition. */
+constexpr std::string_view kNoModeName = "none";
+
+/**
+ * Names the match mode one PvP allocation will run. A pick whose installed mode has no
+ * definition loads without match behaviour, and this is the one line that says so.
+ */
+void report_match_mode(
+    std::uint64_t sessionId,
+    const state::activity::destination::DestinationSelection& destination) noexcept {
+    const std::string_view package(reinterpret_cast<const char*>(destination.packageName.data()),
+                                   destination.packageNameLength);
+    if (!package.starts_with(state::activity::activity_clock::kPvpPackagePrefix)) {
+        return;
+    }
+    const std::int16_t requested = state::activity::match_state::match_activity(destination);
+    state::build_data::activity_rules::Rules rules{};
+    std::uint32_t key = 0;
+    const bool supported = state::build_data::activity_rules::resolve(requested, rules);
+    static_cast<void>(state::build_data::activity_rules::installed_mode(requested, key));
+    report(supported ? core::log::Level::info : core::log::Level::warn,
+           "ev=activity_match stage=mode result=%s session=0x%llX requested=%d activity=%d "
+           "key=0x%08X name=%.*s",
+           supported ? "supported" : "unsupported",
+           static_cast<unsigned long long>(sessionId),
+           static_cast<int>(requested),
+           static_cast<int>(destination.activityIndex),
+           static_cast<unsigned>(key),
+           static_cast<int>(supported ? rules.mode->name.size() : kNoModeName.size()),
+           supported ? rules.mode->name.data() : kNoModeName.data());
+}
+} // namespace
+
 /** Fills every pending host-session row with a source-bound target. */
 void allocate_claimed_host_sessions() noexcept {
     free_retired_host_sessions();
@@ -527,6 +564,7 @@ void allocate_claimed_host_sessions() noexcept {
                static_cast<unsigned>(pending.port),
                occupied,
                static_cast<int>(destination.activityIndex));
+        report_match_mode(target.sessionId, destination);
     }
 }
 

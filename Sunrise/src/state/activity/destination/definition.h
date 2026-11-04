@@ -4,6 +4,8 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "../../build_data/activity_options/definition.h"
+
 namespace sunrise::state::activity::destination {
 
 /** The activity-selection schema carries one fixed 40-byte package name. */
@@ -56,6 +58,10 @@ struct DestinationSelection final {
     bool hasArrivalBubbleHash{};
     /** True only when spawnSetHash came from a present descriptor field. */
     bool hasSpawnSetHash{};
+    /** Descriptor field 16: the option ordinal and variant pairs of the private-match pick. */
+    std::array<std::uint16_t, build_data::activity_options::kPairCapacity> optionPairs{};
+    std::uint8_t optionPairCount{};
+    bool hasOptionPairs{};
     /**
      * Authored arrival bubble for this destination, applied over every derived source.
      * A few destinations bind their arrival when the map loads, rather than declaring it in the

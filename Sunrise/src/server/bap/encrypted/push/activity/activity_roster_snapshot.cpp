@@ -22,6 +22,7 @@
 #include "../../../../gameplay/group/group_host_sessions.h"
 #include "../../../activity_mission_seed_lease.h"
 #include "activity_arrival.h"
+#include "activity_match_snapshot.h"
 #include "activity_member_roster.h"
 #include "activity_mission_seed_roster.h"
 #include "internal.h"
@@ -566,6 +567,9 @@ build_roster_snapshot(Session& session,
             members)
         && members.hasSnapshot) {
         fill_member_roster(snapshot, members.memberDirectory, members.snapshot.identity.opaqueSoid);
+    }
+    if (!fill_match_snapshot(session, snapshot, name)) {
+        return RosterOutcome::encodeFailed;
     }
     // The override names the slice set the client is in. The client applies a pair only there, and
     // a forced set with no point in that slice set leaves the biped picker with no transform.

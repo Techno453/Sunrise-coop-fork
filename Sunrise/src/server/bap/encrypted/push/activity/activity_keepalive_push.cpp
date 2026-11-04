@@ -11,6 +11,7 @@
 #include "../../../../../middleware/secure_channel/runtime.h"
 #include "../../../../../state/activity/bubble_authority/runtime.h"
 #include "../../../../../state/activity/definition.h"
+#include "../../../../../state/activity/match_state/runtime.h"
 #include "../../../../../state/activity/membership/activity_membership_query.h"
 #include "../../../../../state/activity/runtime.h"
 #include "../../../../../state/runtime/runtime.h"
@@ -27,6 +28,8 @@
 #include "activity_authority_reset_push.h"
 #include "activity_global_state_push.h"
 #include "activity_incident_push.h"
+#include "activity_match_events.h"
+#include "activity_match_publication.h"
 #include "activity_member_departure_push.h"
 #include "activity_membership_push.h"
 #include "activity_notification_frame.h"
@@ -81,10 +84,32 @@ void drive_cinematic_hold(Session& session, std::uint64_t now) noexcept {
  * instead would rebuild and send a whole frame on every pump.
  */
 constexpr std::uint64_t kMembershipRetryIntervalMs = 250;
+/**
+ * A match is asked again at this cadence, the interval its time-driven projection keeps, so a
+ * delivered match roster is followed as soon as there is a newer one.
+ */
+constexpr std::uint64_t kMatchPublishIntervalMs =
+    state::activity::match_state::kProjectionIntervalMilliseconds;
+/** A match roster or notice batch the frame could not carry is built again after this long. */
+constexpr std::uint64_t kMatchRetryIntervalMs = 250;
 /** -1 asks for the membership snapshot without naming a bubble. */
 constexpr std::int32_t kNoBubble = -1;
 /** A refresh re-send carries the current revision instead of asking for an older one. */
 constexpr std::uint32_t kCurrentRevision = 0;
+
+/**
+ * Puts back everything a frame that never reached the caller had staged. Match events and
+ * notices stay queued for the next attempt; only their staged counters clear.
+ * @param session Connection whose staged notifications are discarded.
+ */
+void discard_frame(Session& session) noexcept {
+    discard_match_events(session);
+    discard_staged_roster(session);
+    discard_staged_advertisement(session);
+    discard_staged_incident(session);
+    discard_staged_authority_reset(session);
+    discard_staged_authority_query(session);
+}
 
 /**
  * Copies one staged frame to the caller and publishes its nonce.
@@ -104,16 +129,14 @@ constexpr std::uint32_t kCurrentRevision = 0;
                                  std::size_t framedSize,
                                  const std::array<std::byte, state::kBapNonceSize>& nextSendNonce,
                                  bool published) noexcept {
+    auto finalNonce = nextSendNonce;
+    published = append_match_events(session, scratch, finalNonce, framedSize) || published;
     server::gameplay::entity_identities::PublicationLease entityLease;
     if (!published || framedSize == 0 || framedSize > response.size()
         || !begin_staged_roster_publication(session, entityLease)
         || !commit_mission_entity_allocation(session)) {
         // Nothing left, so a roster staged into the discarded body is offered again next push.
-        discard_staged_roster(session);
-        discard_staged_advertisement(session);
-        discard_staged_incident(session);
-        discard_staged_authority_reset(session);
-        discard_staged_authority_query(session);
+        discard_frame(session);
         return false;
     }
     for (std::size_t index = 0; index < framedSize; ++index) {
@@ -121,7 +144,8 @@ constexpr std::uint32_t kCurrentRevision = 0;
     }
     written = framedSize;
     entityLease.release();
-    session.sendNonce = nextSendNonce;
+    session.sendNonce = finalNonce;
+    commit_match_events(session);
     // Settled only here: the grant and the state byte may move only on a delivered frame.
     commit_staged_roster(session);
     commit_staged_advertisement(session);
@@ -155,6 +179,54 @@ constexpr std::uint32_t kCurrentRevision = 0;
         state::activity::membership::reported_region(session.activity.session.sessionId),
         entering,
         grant);
+}
+
+/** What one attempt reads back to learn whether it settled the match roster. */
+struct MatchAttempt final {
+    std::uint32_t refusals{};
+    std::uint32_t commits{};
+};
+
+/**
+ * @return True when this link could not build the match roster for these revisions; only a new
+ * binding, match allocation or revision, or Host revision builds it again.
+ */
+[[nodiscard]] bool match_refused(const Session& session,
+                                 const state::activity::match_state::Publication& match,
+                                 std::uint64_t hostRevision) noexcept {
+    const auto& refusal = session.activityMatchRefusal;
+    return refusal.recorded && refusal.bindingGeneration == session.activity.bindingGeneration
+           && refusal.allocation == match.allocation && refusal.revision == match.revision
+           && refusal.hostRevision == hostRevision;
+}
+
+/**
+ * Settles the match cadence after one attempt. A roster the link could not build is recorded
+ * against the revisions it was built for and is not rebuilt on a timer. Only a frame that could
+ * not carry the roster or notices that were due waits the retry interval.
+ * @param attempt Counters read before the attempt.
+ * @param match Publication the attempt was due for.
+ * @param hostRevision Activity Host revision the attempt was built under.
+ */
+void settle_match(Session& session,
+                  const MatchAttempt& attempt,
+                  const state::activity::match_state::Publication& match,
+                  std::uint64_t hostRevision,
+                  bool matchDue,
+                  bool matchEventsDue,
+                  std::uint64_t now) noexcept {
+    const bool refused = matchDue && session.activityRosterRefusals != attempt.refusals;
+    if (refused) {
+        session.activityMatchRefusal = {.recorded = true,
+                                        .bindingGeneration = session.activity.bindingGeneration,
+                                        .allocation = match.allocation,
+                                        .revision = match.revision,
+                                        .hostRevision = hostRevision};
+    }
+    const bool rosterOwed = matchDue && !refused && session.activityMatchCommits == attempt.commits;
+    const bool eventsOwed = matchEventsDue && match_events_due(session);
+    session.activityMatchDueTick =
+        now + (rosterOwed || eventsOwed ? kMatchRetryIntervalMs : kMatchPublishIntervalMs);
 }
 
 /**
@@ -273,6 +345,21 @@ bool consume_activity_keepalive(Session& session,
     // A body another link staged that this private client applies itself is in a newer estate.
     const bool estateDue = hostKnown && !hostRefused && isPrivate
                            && hostState.estateRevision != session.activityEstateRevision;
+    // Match rosters and notice batches share one cadence, so a frame that could not carry them
+    // is not rebuilt on every pump. The due tick is checked before the match is asked, since
+    // asking can enter the match script, and a poll moves it on.
+    const bool matchEventsDue =
+        active && now >= session.activityMatchDueTick && match_events_due(session);
+    const bool matchPolled = rosterOpen && now >= session.activityMatchDueTick;
+    const std::uint64_t hostRevision = hostKnown ? hostState.revision : 0;
+    state::activity::match_state::Publication match{};
+    const bool matchDue =
+        matchPolled
+        && state::activity::match_state::publication(session.activity.session.sessionId, now, match)
+        && !match_refused(session, match, hostRevision) && match_publication_due(session, match);
+    if (matchPolled && !matchDue && !matchEventsDue) {
+        session.activityMatchDueTick = now + kMatchPublishIntervalMs;
+    }
     server::activity::host::PendingScriptableOverride pendingScriptable{};
     // A target in a public bubble is the public link's to publish, so it owes this link nothing.
     const bool scriptableDue =
@@ -424,10 +511,11 @@ bool consume_activity_keepalive(Session& session,
         || (!keepaliveDue && !regionChanged && !hostStateDue && !estateDue && !scriptableDue
             && !incidentDue && !authorityResetDue && !authorityQueryDue && !hostTeleportDue
             && !retirementDue && !arrivalDue && !membershipDue && !missionAllocationDue && !grantDue
-            && !missionSeedDue && !ownerPublicationDue)) {
+            && !missionSeedDue && !ownerPublicationDue && !matchDue && !matchEventsDue)) {
         return false;
     }
     touchesScratch = true;
+    const MatchAttempt matchAttempt{session.activityRosterRefusals, session.activityMatchCommits};
 
     auto nextSendNonce = session.sendNonce;
     std::size_t framedSize = 0;
@@ -440,10 +528,13 @@ bool consume_activity_keepalive(Session& session,
     // Only a changed Host value or mission state, retirement or the arrival answer can publish a
     // standalone roster.
     if (!keepaliveDue && !regionChanged && !hostTeleportDue && !membershipDue) {
+        bool appendedRoster = false;
         if (hostStateDue || estateDue || scriptableDue || retirementDue || arrivalDue
-            || missionAllocationDue || grantDue || missionSeedDue || ownerPublicationDue) {
-            published = append_roster_notification(
+            || missionAllocationDue || grantDue || missionSeedDue || ownerPublicationDue
+            || matchDue) {
+            appendedRoster = append_roster_notification(
                 session, scratch, key, nextSendNonce, scratch.framed, framedSize);
+            published = appendedRoster;
         }
         const bool appendedIncident =
             incidentDue
@@ -462,6 +553,9 @@ bool consume_activity_keepalive(Session& session,
         published = appendedAuthorityQuery || published;
         const bool delivered = publish_frame(
             session, scratch, response, written, framedSize, nextSendNonce, published);
+        if (matchDue || matchEventsDue) {
+            settle_match(session, matchAttempt, match, hostRevision, matchDue, matchEventsDue, now);
+        }
         if (delivered && (appendedIncident || appendedAuthorityReset || appendedAuthorityQuery)) {
             session.activityKeepaliveDueTick = now + kActivityKeepaliveIntervalMs;
         }
@@ -472,8 +566,12 @@ bool consume_activity_keepalive(Session& session,
     // Nothing may advance membership State until the first required frame proves this caller owns
     // enough capacity to publish at least the keepalive prefix.
     if (!published || framedSize > response.size()) {
-        static_cast<void>(publish_frame(
-            session, scratch, response, written, framedSize, nextSendNonce, published));
+        // Not through publish_frame: that would append the queued match events, deliver an
+        // events-only frame and move the nonce while this call reports nothing sent.
+        discard_frame(session);
+        if (matchDue || matchEventsDue) {
+            settle_match(session, matchAttempt, match, hostRevision, matchDue, matchEventsDue, now);
+        }
         return false;
     }
     const bool appendedAuthorityReset =
@@ -523,7 +621,7 @@ bool consume_activity_keepalive(Session& session,
             SecureZeroMemory(&plan, sizeof plan);
         }
         if (appended || hostStateDue || scriptableDue || retirementDue || arrivalDue || grantDue
-            || missionSeedDue || ownerPublicationDue) {
+            || missionSeedDue || ownerPublicationDue || matchDue) {
             published = append_roster_notification(
                             session, scratch, key, nextSendNonce, scratch.framed, framedSize)
                         || published;
@@ -556,6 +654,9 @@ bool consume_activity_keepalive(Session& session,
                 }
             }
             session.activityKeepaliveDueTick = now + kActivityKeepaliveIntervalMs;
+        }
+        if (matchDue || matchEventsDue) {
+            settle_match(session, matchAttempt, match, hostRevision, matchDue, matchEventsDue, now);
         }
         return delivered;
     }
@@ -694,7 +795,7 @@ bool consume_activity_keepalive(Session& session,
     const std::uint32_t reportedRevision = refresh.snapshot.revision;
     SecureZeroMemory(&refresh, sizeof refresh);
     if (appendedMembership || hostStateDue || estateDue || scriptableDue || retirementDue
-        || arrivalDue || grantDue || missionSeedDue) {
+        || arrivalDue || grantDue || missionSeedDue || matchDue) {
         published = append_roster_notification(
                         session, scratch, key, nextSendNonce, scratch.framed, framedSize)
                     || published;
@@ -733,11 +834,10 @@ bool consume_activity_keepalive(Session& session,
             && (!state::activity::membership::commit(stagedMembership)
                 || !refresh_mission_entity_allocation(session)))) {
         SecureZeroMemory(&stagedMembership, sizeof stagedMembership);
-        discard_staged_roster(session);
-        discard_staged_advertisement(session);
-        discard_staged_incident(session);
-        discard_staged_authority_reset(session);
-        discard_staged_authority_query(session);
+        discard_frame(session);
+        if (matchDue || matchEventsDue) {
+            settle_match(session, matchAttempt, match, hostRevision, matchDue, matchEventsDue, now);
+        }
         return false;
     }
     SecureZeroMemory(&stagedMembership, sizeof stagedMembership);
@@ -767,6 +867,9 @@ bool consume_activity_keepalive(Session& session,
                                  : "ev=gameplay stage=membership result=republished "
                                    "reason=host_teleport");
         }
+    }
+    if (matchDue || matchEventsDue) {
+        settle_match(session, matchAttempt, match, hostRevision, matchDue, matchEventsDue, now);
     }
     return delivered;
 }

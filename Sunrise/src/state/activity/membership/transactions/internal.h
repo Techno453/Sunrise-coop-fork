@@ -53,7 +53,9 @@ inline bool equal(const RegionState& first, const RegionState& second) noexcept 
 
 /** @return True when both sparse client-state reports match field by field. */
 inline bool equal(const AuthoritativeUpdate& first, const AuthoritativeUpdate& second) noexcept {
-    return equal(first.spawn, second.spawn) && equal(first.teleport, second.teleport)
+    return first.assignedPartition == second.assignedPartition
+           && first.hasAssignedPartition == second.hasAssignedPartition
+           && equal(first.spawn, second.spawn) && equal(first.teleport, second.teleport)
            && equal(first.currentRegion, second.currentRegion) && equal(first.region, second.region)
            && first.transitionToken == second.transitionToken
            && first.hasTransitionToken == second.hasTransitionToken
@@ -81,6 +83,10 @@ inline bool equal(const Snapshot& first, const Snapshot& second) noexcept {
 inline MembershipState merge(const MembershipState& state,
                              const AuthoritativeUpdate& update) noexcept {
     MembershipState merged = state;
+    if (update.hasAssignedPartition) {
+        merged.assignedPartition = update.assignedPartition;
+        merged.hasAssignedPartition = true;
+    }
     // The client owns its transition count, independently of the host's teleport request token.
     // An initial load can consume that request without a second transition. Always reflect its
     // report: retaining the host's predicted advance leaves the region acknowledgment ahead of
@@ -151,7 +157,9 @@ inline bool equal_authoritative(const MembershipState& first,
                                 const MembershipState& second) noexcept {
     // The host teleport replaces the teleport mirror in the body while it is set, so a change to
     // it is a change to what the client reads.
-    return first.transitionToken == second.transitionToken
+    return first.assignedPartition == second.assignedPartition
+           && first.hasAssignedPartition == second.hasAssignedPartition
+           && first.transitionToken == second.transitionToken
            && first.hasTransitionToken == second.hasTransitionToken
            && equal(first.spawn, second.spawn) && equal(first.teleport, second.teleport)
            && first.hasHostTeleport == second.hasHostTeleport

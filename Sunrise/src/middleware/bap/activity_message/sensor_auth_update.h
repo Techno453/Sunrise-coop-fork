@@ -299,6 +299,8 @@ struct Snapshot final {
     std::uint64_t playerKey{};
     /** Activity-clock base in native ticks; directive epochs use the same origin. */
     std::uint64_t activityTime{};
+    /** `activityTime` is a match's own clock, which the roster push keeps. */
+    bool matchClock{};
     /** Compatibility revision used by groups without an explicit per-key value. */
     std::uint8_t stateSequence{};
     /** The participation record's region index. Its `+8` latch needs it. */

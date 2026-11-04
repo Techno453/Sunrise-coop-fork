@@ -123,6 +123,7 @@ void reset_join_state(Session& session) noexcept {
     authority_query::reset(session.activityAuthorityQuery, session.activity.bindingGeneration);
     authority_reset::reset(session.activityAuthorityReset, session.activity.bindingGeneration);
     session.activityIncidentStaged = {};
+    session.activityMatchDueTick = 0;
     session.activityRosterReason = 0;
     session.activityRosterStaged = {};
     session.activityRosterDecode = {};
