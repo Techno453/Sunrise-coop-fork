@@ -5,12 +5,29 @@
 #include <cstdint>
 #include <span>
 
+#include "../../content/packages/tables/incident_targets.h"
 #include "../../encoding/bit_writer.h"
 
 namespace sunrise::middleware::bap::activity_message::incident {
 
+struct Incident;
+/** @return True when the body validates, ends on its payload and pads with zero bits only. */
+[[nodiscard]] bool fully_framed(std::span<const std::byte> payload, Incident& parsed) noexcept;
+/**
+ * @return True for a fully framed body a peer may receive: a compact-kill target only as one
+ * canonical kill, any other target only without a compressed selector.
+ */
+[[nodiscard]] bool relayable(std::span<const std::byte> payload, Incident& parsed) noexcept;
+/** Extracts the payload bytes of an envelope fully_framed accepted. */
+[[nodiscard]] bool extract_body(std::span<const std::byte> input,
+                                const Incident& parsed,
+                                std::span<std::byte> output) noexcept;
+
 /** Activity message type 19 carries one incident. Both sides can send it. */
 inline constexpr std::uint32_t kMessageType = 19;
+
+/** Raw kill target whose body carries a compact role-2 or role-3 schema. */
+inline constexpr std::uint32_t kCompactKillTarget = 1'412;
 
 /** Every target index is 13 bits on the wire. */
 inline constexpr std::uint8_t kTargetWidth = 13;
@@ -103,5 +120,22 @@ struct Incident {
  * The caller still owns activity identity, output ordering, nonce commit and transport staging.
  */
 [[nodiscard]] bool write(encoding::bits::Writer& writer, const Incident& incident) noexcept;
+
+/**
+ * Prepares one peer body. Target 1412's compact role schemas are expanded to canonical C8080645a;
+ * the selector and other envelope fields retain their exact source bits. Exactly one source grammar
+ * must consume the entire payload; an ambiguous match is refused. sourceSchema is zero for
+ * an unchanged body. Output is untouched on failure.
+ */
+[[nodiscard]] bool prepare_peer_relay(std::span<const std::byte> payload,
+                                      std::span<std::byte> output,
+                                      std::size_t& written,
+                                      std::uint32_t& sourceSchema) noexcept;
+
+/** Reads the native completed target list; the source client already classified the event. */
+[[nodiscard]] bool
+resolve_targets(std::span<const std::byte> payload,
+                const content::packages::tables::incident_targets::Catalog& catalog,
+                content::packages::tables::incident_targets::Selection& output) noexcept;
 
 } // namespace sunrise::middleware::bap::activity_message::incident

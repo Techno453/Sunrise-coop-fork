@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cmath>
 
 #include "../../encoding/bit_raw.h"
 #include "../../encoding/bit_reader.h"
@@ -120,6 +121,25 @@ constexpr std::uint32_t kMaximumRegion = 0x7FFFFFFF;
 [[nodiscard]] bool valid(const Snapshot& snapshot) noexcept {
     if (snapshot.lifetime > kMaximumLifetimeState) {
         return false;
+    }
+    if (snapshot.matchIntro
+        && (!snapshot.hasMatchScores || !snapshot.matchModeKey
+            || snapshot.lifetime != kIntroLifetime || snapshot.matchFinished
+            || snapshot.matchComplete)) {
+        return false;
+    }
+    if (snapshot.activityTimerActive
+        && (!std::isfinite(snapshot.activityTimerRate) || snapshot.activityTimerRate < 0
+            || snapshot.activityTimerRemaining > snapshot.activityTimerMaximum
+            || snapshot.activityTimerCurrentAtEpoch > snapshot.activityTimerMaximum)) {
+        return false;
+    }
+    for (const auto& seat : snapshot.participationSeats) {
+        if (seat.hasAssignedPartition
+            && (seat.assignedPartition < kUnassignedPartition
+                || seat.assignedPartition > kLastPartition)) {
+            return false;
+        }
     }
     if (snapshot.hasRegion && snapshot.region > kMaximumRegion) {
         return false;

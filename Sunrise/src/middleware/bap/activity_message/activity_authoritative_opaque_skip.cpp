@@ -1,5 +1,6 @@
 #include <bit>
 
+#include "../../gameplay/group/native_player_profile.h"
 #include "client_authoritative_data.h"
 
 namespace sunrise::middleware::bap::activity_message::client_authoritative_data {
@@ -15,6 +16,13 @@ constexpr std::uint8_t kSmallArrayCountWidth = 8;
 constexpr std::uint64_t kSmallArrayMaximumCount = 128;
 /** Every dynamic element in both opaque branches is one byte. */
 constexpr std::size_t kArrayElementBitCount = 8;
+/** A presence bit. */
+constexpr std::uint8_t kPresenceWidth = 1;
+/** The nested player blob (C21820): a 3-bit kind and a 1-bit owned index ahead of its A block. */
+constexpr std::uint8_t kPlayerBlobHeaderWidth = 3 + 1;
+/** 16D4080's optional name: 16-bit units ending in a zero unit, within the native capacity. */
+constexpr std::uint8_t kNameUnitWidth = 16;
+constexpr std::size_t kNameUnitCapacity = gameplay::group::kNativePlayerNameCapacity;
 
 /**
  * Skips one optional fixed-width field.
@@ -86,11 +94,61 @@ constexpr std::int32_t kLegStateBias = 1;
 }
 
 /**
- * Skips the optional dynamic byte-list field inside B2.
+ * Reads the assignment the nested player blob (C21820) at the head of B4 reports.
+ * @param nested Reader at the first element of the list.
+ * @param endRemaining Bits left in `nested` once the list is consumed; no read passes it.
+ * @param update Receives the assigned partition only when the whole prefix reads.
+ * @return False when the prefix does not fit the list or its name is unterminated.
+ */
+[[nodiscard]] bool read_player_assignment(encoding::bits::Reader& nested,
+                                          std::size_t endRemaining,
+                                          ClientAuthoritativeData& update) noexcept {
+    const auto read = [&](std::uint8_t width, std::uint64_t& value) noexcept {
+        return nested.remaining_bits() >= endRemaining + width && nested.read(width, value);
+    };
+    std::uint64_t value = 0;
+    if (!read(kPlayerBlobHeaderWidth, value) || !read(kPresenceWidth, value)) {
+        return false;
+    }
+    if (value != 0) {
+        bool terminated = false;
+        for (std::size_t unit = 0; unit < kNameUnitCapacity; ++unit) {
+            if (!read(kNameUnitWidth, value)) {
+                return false;
+            }
+            if (value == 0) {
+                terminated = true;
+                break;
+            }
+        }
+        if (!terminated) {
+            return false;
+        }
+    }
+    if (!read(kPresenceWidth, value)) {
+        return false;
+    }
+    if (value != 0) {
+        if (!read(kPlayerAssignmentWidth, value)) {
+            return false;
+        }
+        update.assignedPartition =
+            static_cast<std::int8_t>(static_cast<int>(value) - kPlayerAssignmentBias);
+        update.hasAssignedPartition = true;
+    }
+    return true;
+}
+
+/**
+ * Walks the optional dynamic byte-list field inside B2 and keeps the native assignment the
+ * nested player blob reports. A list whose prefix does not read as a player blob carries no
+ * assignment; the report around it still stands.
  * @param reader Reader sitting at the B4 presence marker.
+ * @param update Receives the assigned partition when the block carries one.
  * @return True when the marker is absent, or the whole list is there and within its limit.
  */
-[[nodiscard]] bool skip_large_array(encoding::bits::Reader& reader) noexcept {
+[[nodiscard]] bool read_player_array(encoding::bits::Reader& reader,
+                                     ClientAuthoritativeData& update) noexcept {
     bool present = false;
     std::uint64_t count = 0;
     if (!read_presence(reader, present)) {
@@ -99,8 +157,19 @@ constexpr std::int32_t kLegStateBias = 1;
     if (!present) {
         return true;
     }
-    return reader.read(kLargeArrayCountWidth, count) && count <= kLargeArrayMaximumCount
-           && reader.skip(static_cast<std::size_t>(count) * kArrayElementBitCount);
+    if (!reader.read(kLargeArrayCountWidth, count) || count > kLargeArrayMaximumCount) {
+        return false;
+    }
+    // Keep the outer schema walk byte-exact; the nested prefix never reads into its siblings.
+    encoding::bits::Reader nested = reader;
+    const std::size_t bits = static_cast<std::size_t>(count) * kArrayElementBitCount;
+    if (!reader.skip(bits)) {
+        return false;
+    }
+    if (bits != 0) {
+        static_cast<void>(read_player_assignment(nested, nested.remaining_bits() - bits, update));
+    }
+    return true;
 }
 
 } // namespace
@@ -116,7 +185,10 @@ bool read_presence(encoding::bits::Reader& reader, bool& present) noexcept {
 }
 
 /** Keeps B2 fields 0, 10 and 11 from this exact sparse report. */
-bool read_transport_branch(encoding::bits::Reader& reader, TransportReport& report) noexcept {
+bool read_transport_branch(encoding::bits::Reader& reader,
+                           TransportReport& report,
+                           ClientAuthoritativeData* update) noexcept {
+    ClientAuthoritativeData ignored{};
     report = {};
     TransportReport parsed{};
     std::uint64_t flags{};
@@ -146,7 +218,8 @@ bool read_transport_branch(encoding::bits::Reader& reader, TransportReport& repo
         && skip_optional(reader, 32) && skip_optional(reader, 32) && skip_optional(reader, 8U * 8U)
         && skip_optional(reader, 32) && address(parsed.alternate, parsed.hasAlternate)
         && address(parsed.address, parsed.hasAddress) && skip_optional(reader, kAddressBits)
-        && skip_optional(reader, 64U * 8U) && skip_large_array(reader) && reader.skip(1);
+        && skip_optional(reader, 64U * 8U)
+        && read_player_array(reader, update == nullptr ? ignored : *update) && reader.skip(1);
     if (!walked) {
         return false;
     }

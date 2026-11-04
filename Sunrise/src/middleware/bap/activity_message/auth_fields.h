@@ -20,6 +20,7 @@ inline constexpr std::uint8_t kPresenceWidth = 1;
 inline constexpr std::uint8_t kBoolWidth = 1;
 /** Signed 32-bit schema fields store zero at the middle of the unsigned wire range. */
 inline constexpr std::uint32_t kSigned32Bias = 0x80000000U;
+inline constexpr std::uint8_t kSigned32Width = 32;
 /** Generations and revisions are 31-bit counters that the client accepts only while positive. */
 inline constexpr std::uint8_t kCounterWidth = 31;
 inline constexpr std::uint32_t kMaximumCounter = 0x7FFFFFFFU;
@@ -36,6 +37,40 @@ inline constexpr std::size_t kClientRefBits =
     kClientRefKeyWidth + kClientRefTypeWidth + kClientRefIndexWidth;
 /** Native durations count 673,200 ticks per second. */
 inline constexpr std::uint64_t kTicksPerSecond = 673'200;
+/** Six-bit faction fields carry native faction plus three, so they hold -3 to 60. */
+inline constexpr std::uint8_t kFactionWidth = 6;
+inline constexpr std::int32_t kFactionBias = 3;
+inline constexpr std::int8_t kMinimumFaction = -3;
+inline constexpr std::int8_t kMaximumFaction = 60;
+/**
+ * Native factions of a match's teams: team (native partition) t is faction 0x11 + t, for the
+ * twelve teams a match holds. The scoreboard team table (0xFDA040) and its player rows (0xFDAF80)
+ * take a team row's partition back as faction - 0x11, the Switch Teams chooser (0x138A6B0) looks
+ * the player's assigned partition up in that table, and the allegiance matrix (0x4C9270) folds
+ * factions 0x11..0x1C onto the same twelve buckets.
+ */
+inline constexpr std::int8_t kFirstTeamFaction = 0x11;
+inline constexpr std::int8_t kTeamFactionCount = 12;
+
+/**
+ * @return The native faction of team `partition`. A partition past the twelve team factions, or
+ * no partition, keeps its own value; the native team table reads no faction for it either.
+ */
+[[nodiscard]] constexpr std::int8_t team_faction(std::int8_t partition) noexcept {
+    return partition >= 0 && partition < kTeamFactionCount
+               ? static_cast<std::int8_t>(kFirstTeamFaction + partition)
+               : partition;
+}
+
+/**
+ * @return The team (native partition) a faction names: a team faction folds to its partition as
+ * 0x4C9270 folds it, and any other faction keeps its value.
+ */
+[[nodiscard]] constexpr std::int8_t faction_team(std::int8_t faction) noexcept {
+    return faction >= kFirstTeamFaction && faction < kFirstTeamFaction + kTeamFactionCount
+               ? static_cast<std::int8_t>(faction - kFirstTeamFaction)
+               : faction;
+}
 
 /** Writes the fields in order. @return False when the writer runs out of room. */
 [[nodiscard]] inline bool write_fields(encoding::bits::Writer& writer,

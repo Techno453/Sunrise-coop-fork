@@ -19,6 +19,14 @@ inline constexpr std::int32_t kAbsentSliceSetIndex = -1;
 inline constexpr std::int32_t kMaximumSliceSetIndex = 1022;
 /** Logical -1 names no region; D6 field 2 encodes it as wire 0x7FFFFFFF. */
 inline constexpr std::int32_t kAbsentRegionIndex = -1;
+/**
+ * The player blob's native assignment A.P2, which must match participation record +56: six bits
+ * at bias one, so it spans -1 through 62.
+ */
+inline constexpr std::uint8_t kPlayerAssignmentWidth = 6;
+inline constexpr std::int32_t kPlayerAssignmentBias = 1;
+inline constexpr std::int8_t kMinimumAssignment = -1;
+inline constexpr std::int8_t kMaximumAssignment = (1 << kPlayerAssignmentWidth) - 2;
 
 /** Complete spawn-state snapshot mirrored between activity messages 22 and 12. */
 struct SpawnState final {
@@ -63,6 +71,9 @@ struct RegionState final {
  * `region` is the pending leg: what it is loading, or what is behind it after a z-leg switch.
  */
 struct ClientAuthoritativeData final {
+    /** Native assignment (team partition) the B2 player blob reports, if it carries one. */
+    std::int8_t assignedPartition{-1};
+    bool hasAssignedPartition{};
     TransportReport transport{};
     SpawnState spawn{};
     TeleportState teleport{};
@@ -103,9 +114,13 @@ inline constexpr std::size_t kMaximumEncodedSize = 10'833;
  */
 [[nodiscard]] bool read_presence(encoding::bits::Reader& reader, bool& present) noexcept;
 
-/** Reads the native transport fields while validating the entire B2 branch. */
+/**
+ * Reads the native transport fields while validating the entire B2 branch.
+ * @param update Optional; receives the assignment the nested player blob reports.
+ */
 [[nodiscard]] bool read_transport_branch(encoding::bits::Reader& reader,
-                                         TransportReport& report) noexcept;
+                                         TransportReport& report,
+                                         ClientAuthoritativeData* update = nullptr) noexcept;
 
 /**
  * Reads the D4 branch and keeps its optional transition token and both region legs.
