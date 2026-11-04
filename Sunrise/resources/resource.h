@@ -52,3 +52,12 @@
 #define IDR_CHARACTER_STARTER 111
 /** Build-scoped faction turn-in relationships are static content, not player-save rows. */
 #define IDR_FACTION_TURN_IN_CONTENT 112
+
+/** Bundled activity-host Rumble match policy; native mechanics remain in the client. */
+#define IDR_MATCH_RUMBLE 113
+
+/** Bundled Control policy; zone capture mechanics remain native. */
+#define IDR_MATCH_CONTROL 114
+
+/** Shared match policy library loaded before either mode. */
+#define IDR_MATCH_COMMON 115
