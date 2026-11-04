@@ -6,6 +6,7 @@
 #include <limits>
 
 #include "../social/fireteam_membership.h"
+#include "activity_clock/definition.h"
 #include "bubble_authority/definition.h"
 #include "defaults/definition.h"
 #include "destination/definition.h"
@@ -13,6 +14,7 @@
 #include "entity_slots/member_leases.h"
 #include "forced/definition.h"
 #include "launch_party.h"
+#include "match_state/definition.h"
 #include "membership/definition.h"
 #include "mission/definition.h"
 #include "receipts/definition.h"
@@ -97,6 +99,10 @@ struct SessionRecord {
     bubble_authority::AuthorityState bubbleAuthority{};
     /** Server-authored mission state survives Lua reattach for this exact session generation. */
     mission::MissionState mission{};
+    /** Shared PvP activity time origin; the first match publication sets it. */
+    activity_clock::Anchor activityClock{};
+    /** Match authority of a PvP session: scores, teams, rounds and objectives. */
+    match_state::State matchState{};
     std::uint64_t sessionId{};
     /** Join binds this key before any later client identity update can be accepted. */
     std::uint64_t memberKey{};

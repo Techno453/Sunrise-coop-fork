@@ -29,7 +29,10 @@ inline bool same_destination(const destination::DestinationSelection& left,
            && left.descriptorBits == right.descriptorBits
            && left.descriptorBitLength == right.descriptorBitLength
            && left.descriptorNameBit == right.descriptorNameBit
-           && left.hasDescriptorName == right.hasDescriptorName;
+           && left.hasDescriptorName == right.hasDescriptorName
+           && left.hasOptionPairs == right.hasOptionPairs
+           && left.optionPairCount == right.optionPairCount
+           && left.optionPairs == right.optionPairs;
 }
 
 /** @return True when one record is the exact generation named by a binding. */

@@ -33,7 +33,8 @@ namespace {
         return nullptr;
     }
     const SessionRecord& record = state.sessions[target];
-    if (record.recordRevision == kInvalidRevision || (requireJoined && !record.joined)) {
+    if (record.recordRevision == kInvalidRevision || (!requireJoined && record.matchState.aborted)
+        || (requireJoined && !record.joined)) {
         return nullptr;
     }
     mutation.sessionId = sessionId;

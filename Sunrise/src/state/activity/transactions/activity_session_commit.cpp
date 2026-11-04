@@ -2,6 +2,7 @@
 
 #include "../../runtime/storage/internal.h"
 #include "../destination/activity_destination_validation.h"
+#include "../match_state/script_policy.h"
 #include "../runtime.h"
 #include "../shared_allocation.h"
 #include "internal.h"
@@ -44,6 +45,7 @@ bool commit(PendingAllocation& allocation) noexcept {
         return false;
     }
 
+    const match_state::script_policy::DeferredScope deferred;
     AcquireSRWLockExclusive(&runtime::storage::g_stateLock);
     ActivityState& state = runtime::storage::g_state.activity;
     if (!transactions::allocation_available(state)
@@ -63,6 +65,7 @@ bool commit(PendingAllocation& allocation) noexcept {
 
     SessionRecord& record = state.sessions[target];
     // A full reset clears the evicted record and restores each field's own unset value.
+    match_state::script_policy::release(target, record.sessionId, record.createdRevision);
     record = {};
     ++state.stateRevision;
     record.destination = prepared.destination;

@@ -3,6 +3,7 @@
 #include "../../account/account_context.h"
 #include "../../runtime/storage/internal.h"
 #include "../destination/activity_destination_validation.h"
+#include "../match_state/script_policy.h"
 #include "../shared_allocation.h"
 #include "internal.h"
 #include "shared_allocation_policy.h"
@@ -100,6 +101,7 @@ bool commit_shared_allocation(const PendingAllocation& plan) noexcept {
         || plan.soidBase != (plan.launchParty.publisherAccount & kAccountMask)) {
         return false;
     }
+    const match_state::script_policy::DeferredScope deferred;
     AcquireSRWLockExclusive(&runtime::storage::g_stateLock);
     auto& state = runtime::storage::g_state.activity;
     LaunchPartyGuard current;
@@ -130,6 +132,8 @@ bool commit_shared_allocation(const PendingAllocation& plan) noexcept {
                 && !plan.expectedCreatedRevision && !plan.expectedRecordRevision
                 && plan.sessionId == compose_session_soid(plan.soidBase, state.nextSessionId);
         if (ready) {
+            match_state::script_policy::release(
+                plan.targetSlot, record.sessionId, record.createdRevision);
             record = {};
             record.destination = plan.destination;
             record.sessionId = plan.sessionId;

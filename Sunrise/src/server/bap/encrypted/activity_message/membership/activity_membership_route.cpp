@@ -67,6 +67,8 @@ make_identity(const service::client_identity::ClientIdentity& parsed) noexcept {
     update.currentRegion.publicState = parsed.currentRegion.publicState;
     update.currentRegion.auxState = parsed.currentRegion.auxState;
     update.hasCurrentRegion = parsed.hasCurrentRegion;
+    update.assignedPartition = parsed.assignedPartition;
+    update.hasAssignedPartition = parsed.hasAssignedPartition;
     update.region.index = parsed.region.index;
     update.region.hash = parsed.region.hash;
     update.region.sliceSetIndex = parsed.region.sliceSetIndex;

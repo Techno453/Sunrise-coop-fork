@@ -11,8 +11,10 @@
 
 #include "../../core/logging/log.h"
 #include "../../core/settings/settings.h"
+#include "../../state/account/account_context.h"
 #include "../../state/account/public_profiles.h"
 #include "../../state/activity/fireteam.h"
+#include "../../state/activity/match_state/runtime.h"
 #include "../../state/activity/member_context.h"
 #include "../../state/activity/member_departure.h"
 #include "../../state/activity/membership/activity_membership_query.h"
@@ -29,6 +31,7 @@
 #include "bap_session_nonce.h"
 #include "core/threading/srw_lock.h"
 #include "encrypted/bap_connection_publication.h"
+#include "encrypted/push/activity/activity_match_publication.h"
 #include "encrypted/push/activity/mission_seed_world_change.h"
 #include "encrypted/social_feed_route.h"
 #include "internal.h"
@@ -329,6 +332,16 @@ void clear_session(Session& session) noexcept {
         if (!proxy::can_enqueue_local_reply(session->id)) {
             return false;
         }
+    }
+    std::uint64_t failedAllocation{};
+    if (session->activityMatchAborted && session->activity.role != ActivityClientRole::none
+        && state::activity::match_state::aborted(session->activity.session.sessionId,
+                                                 failedAllocation)
+        && encrypted::push::activity::match_abort_delivered(*session, failedAllocation)) {
+        // End this ActivityClient transport. Native activity-host connection failure owns cleanup
+        // and the return to Orbit; lifetime 8 would instead select the next authored activity.
+        response.closeConnection = true;
+        return false;
     }
     const bool produced = encrypted::consume_deferred(
         *session, g_scratch, request.response, response.size, touchesScratch);

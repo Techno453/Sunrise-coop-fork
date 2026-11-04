@@ -14,6 +14,7 @@
 #include "../../../../../middleware/encoding/byte_order.h"
 #include "../../../../../middleware/secure_channel/runtime.h"
 #include "../../../../../state/activity/destination/activity_destination_public.h"
+#include "../../../../../state/activity/match_state/runtime.h"
 #include "../../../../../state/activity_sdk/generated_world/runtime.h"
 #include "../../../../../state/activity_sdk/runtime.h"
 #include "../../../../gameplay/gameplay_advertisement.h"
@@ -281,6 +282,19 @@ make_base_snapshot(const Session& session,
     wire.identity.field5 = snapshot.identity.opaqueSoid;
     wire.identity.field6 = snapshot.identity.secondaryOpaque;
     project_activity_local_name(wire);
+    // The native assignment the client reported wins; otherwise the match assigns one.
+    if (mutation.authoritativeInput.hasAssignedPartition) {
+        wire.partition = mutation.authoritativeInput.assignedPartition;
+    } else {
+        static_cast<void>(state::activity::match_state::assignment(
+            activityHostId, wire.identity.field5, wire.partition));
+    }
+    for (auto& peer : wire.peers) {
+        if (peer.present) {
+            static_cast<void>(state::activity::match_state::assignment(
+                activityHostId, peer.identity.field5, peer.partition));
+        }
+    }
     wire.spawn.state = snapshot.spawn.state;
     wire.spawn.opaqueByte = snapshot.spawn.opaqueByte;
     wire.spawn.opaqueValue = snapshot.spawn.opaqueValue;

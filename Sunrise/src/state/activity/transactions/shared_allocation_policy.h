@@ -85,8 +85,8 @@ same_launch_destination(const destination::DestinationSelection& left,
 [[nodiscard]] inline bool share_launch(const ActivityState& state,
                                        const SessionRecord& record,
                                        const LaunchParty& party) noexcept {
-    if (!record.occupied || !record.bindingRetainCount || !record.launchParty.publisherAccount
-        || (!record.joined && record.joinedRevision)
+    if (!record.occupied || record.matchState.aborted || !record.bindingRetainCount
+        || !record.launchParty.publisherAccount || (!record.joined && record.joinedRevision)
         || launch_owner_slot(record, party) == record.launchOwners.size()) {
         return false;
     }

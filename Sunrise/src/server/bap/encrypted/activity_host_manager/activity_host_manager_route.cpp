@@ -133,6 +133,9 @@ prepare_allocation(const request_selection::ActivityManagerSelectionResult& pars
     destination.arrivalBubbleHash = source.arrivalBubbleHash;
     destination.hasSpawnSetHash = source.hasSpawnSetHash;
     destination.spawnSetHash = source.spawnSetHash;
+    destination.optionPairs = source.tailPairs;
+    destination.optionPairCount = source.tailPairCount;
+    destination.hasOptionPairs = source.hasTailPairs;
     // The descriptor is echoed back as sent, so its bits travel with the selection instead of being
     // rebuilt from the scalars above. A descriptor too wide for storage carries none, and the echo
     // falls back to the configured form.

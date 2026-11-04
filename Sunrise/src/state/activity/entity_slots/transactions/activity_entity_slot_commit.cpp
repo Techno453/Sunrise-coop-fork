@@ -230,6 +230,7 @@ bool commit(PendingMutation& mutation) noexcept {
     SessionRecord& record = state.sessions[prepared.targetSlot];
     if (state.stateRevision == kMaximumRevision
         || state.stateRevision != prepared.expectedStateRevision || !record.occupied
+        || (prepared.kind == MutationKind::join && record.matchState.aborted)
         || record.sessionId != prepared.sessionId
         || record.recordRevision != prepared.expectedRecordRevision
         || (prepared.advanceReplicationSequence
