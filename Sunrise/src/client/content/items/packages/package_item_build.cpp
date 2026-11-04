@@ -143,6 +143,9 @@ bool build() noexcept {
         (void)content::scenarios::build(packageSource, storage.scratch);
         (void)content::spawn_sets::build(packageSource, storage.scratch);
         (void)content::hash_names::build(packageSource, storage.scratch);
+        if (activity_options_due()) {
+            build_activity_options(packageSource, storage);
+        }
         if (ready()) {
             SecureZeroMemory(&keys, sizeof keys);
             return true;

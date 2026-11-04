@@ -590,4 +590,10 @@ void report(std::size_t published, const char* reason) noexcept;
                                                std::span<const std::byte> root,
                                                std::uint64_t itemDefinitionCount) noexcept;
 
+/**
+ * Optional installed private-option domain; off/attempted never delays other content. Callers
+ * start it only when activity_options_due(); every started pass ends attempted.
+ */
+void build_activity_options(const reader::Source& source, Storage& storage) noexcept;
+
 } // namespace sunrise::client::content::items::packages

@@ -40,6 +40,12 @@ bool requires_package_sweep() noexcept {
 bool refresh() noexcept {
     if (ready()) {
         const std::lock_guard lock(g_refreshLock);
+        // The optional private-option domain retries on later requested slices until its
+        // container is named; the pass that then starts always ends attempted, which stops the
+        // retry. The item refresh completes without it.
+        if (items::packages::activity_options_due() && items::packages::readable()) {
+            (void)items::packages::build();
+        }
         const bool persisted = state::ensure_profile_item_identities()
                                && state::ensure_character_subclasses() && emote_collection_settled()
                                && state::build_data::persist();

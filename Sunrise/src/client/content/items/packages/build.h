@@ -22,4 +22,7 @@ namespace sunrise::client::content::items::packages {
 /** Exports once at Client activation only when the startup setting requests it. */
 void export_keys_if_requested() noexcept;
 
+/** True while the optional private-option pass is unfinished and its container is named. */
+[[nodiscard]] bool activity_options_due() noexcept;
+
 } // namespace sunrise::client::content::items::packages
