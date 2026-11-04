@@ -57,6 +57,8 @@ bool exchange(Vm& first, Vm& second) noexcept {
                startReference,
                eventReferences,
                loadReference,
+               matchReferences,
+               matchDefinition,
                hasInitialState,
                active,
                faulted] = value;
@@ -102,6 +104,8 @@ bool exchange(Vm& first, Vm& second) noexcept {
                         startReference,
                         eventReferences,
                         loadReference,
+                        matchReferences,
+                        matchDefinition,
                         hasInitialState,
                         active,
                         faulted);

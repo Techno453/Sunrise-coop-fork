@@ -85,11 +85,14 @@ enum class Handler : std::uint8_t {
     event,
     /** Runs once per attach that restored an already-started program, in place of start. */
     load,
+    match,
 };
 
 /** Native values available only while one callback is inside lua_pcall. */
 struct CallFrame final {
     Candidate candidate{};
+    const MatchRequest* matchRequest{};
+    MatchResponse matchResponse{};
     const host::Event* event{};
     const host::ClientMessageSnapshot* clientMessage{};
     std::uint64_t now{};
@@ -101,9 +104,10 @@ struct CallFrame final {
     bool moduleOwnershipFailed{};
 };
 
-/** @return One LUA_NOREF per event kind; a zero would read as a captured callback. */
-[[nodiscard]] constexpr std::array<int, host::kEventKindCount> make_unset_references() noexcept {
-    std::array<int, host::kEventKindCount> references{};
+/** @return Unset references; zero would read as a captured callback. */
+template <std::size_t Count = host::kEventKindCount>
+[[nodiscard]] constexpr std::array<int, Count> make_unset_references() noexcept {
+    std::array<int, Count> references{};
     references.fill(LUA_NOREF);
     return references;
 }
@@ -166,6 +170,9 @@ struct Impl final {
     int startReference{LUA_NOREF};
     std::array<int, host::kEventKindCount> eventReferences{make_unset_references()};
     int loadReference{LUA_NOREF};
+    std::array<int, state::activity::match_state::script_policy::kHandlers.size()> matchReferences{
+        make_unset_references<state::activity::match_state::script_policy::kHandlers.size()>()};
+    state::activity::match_state::script_policy::ModeDefinition matchDefinition{};
     bool hasInitialState{};
     bool active{};
     bool faulted{};
@@ -181,7 +188,8 @@ struct VmAccess final {
 };
 
 /** @return True once the arena owns a block laid out as one free span. */
-[[nodiscard]] bool arena_initialize(Arena& arena) noexcept;
+[[nodiscard]] bool arena_initialize(Arena& arena,
+                                    std::size_t capacity = kArenaByteCapacity) noexcept;
 /** Frees the block. Every Lua object in it is already gone by then. */
 void arena_release(Arena& arena) noexcept;
 void* arena_allocate(void* context,
@@ -210,6 +218,14 @@ inline void attach_impl(lua_State* state, Impl& impl) noexcept {
         return impl.startReference;
     case Handler::load:
         return impl.loadReference;
+    case Handler::match:
+        if (impl.frame != nullptr && impl.frame->matchRequest != nullptr) {
+            const auto index = static_cast<std::size_t>(impl.frame->matchRequest->kind);
+            if (index < impl.matchReferences.size()) {
+                return impl.matchReferences[index];
+            }
+        }
+        return LUA_NOREF;
     case Handler::event:
         return LUA_NOREF;
     }
@@ -309,6 +325,10 @@ inline void set_string(lua_State* state, const char* key, std::string_view value
 [[nodiscard]] bool initialize_sandbox(Impl& impl) noexcept;
 /** Pushes and executes the selected script callback inside the current protected frame. */
 int protected_callback(lua_State* state);
+/** Calls one typed match entry with copied facts and validates every returned field. */
+int call_match_policy(lua_State* state);
+/** Captures a required mode declaration using raw reads inside the opening protected call. */
+void capture_match_definition(lua_State* state, Impl& impl);
 /** Records a bounded single-line diagnostic. */
 void set_error(Impl& impl, std::string_view error) noexcept;
 /** Removes every Lua-owned value while retaining reusable fixed storage. */

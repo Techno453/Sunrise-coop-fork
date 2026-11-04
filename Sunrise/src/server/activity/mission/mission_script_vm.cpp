@@ -1,9 +1,13 @@
+#include <Windows.h>
+
 #include <algorithm>
 #include <cstddef>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <new>
 
+#include "../../../../resources/resource.h"
 #include "mission_api.h"
 #include "mission_script_lua_resolve.h"
 #include "mission_script_variable_log.h"
@@ -203,6 +207,32 @@ static_assert(std::size(api::kEvents) == host::kEventKindCount);
     if (impl == nullptr || lua_type(state, 1) != LUA_TTABLE) {
         return luaL_error(state, "mission chunk must return one program table");
     }
+    if (impl->identity.matchPolicy) {
+        namespace policy = state::activity::match_state::script_policy;
+        lua_pushnil(state);
+        while (lua_next(state, 1) != 0) {
+            if (lua_type(state, -2) != LUA_TSTRING) {
+                return luaL_error(state, "match policy keys must name typed callbacks");
+            }
+            const auto key = detail::lua_string_view(state, -2);
+            if (key != "mode"
+                && std::find(policy::kHandlers.begin(), policy::kHandlers.end(), key)
+                       == policy::kHandlers.end()) {
+                return luaL_error(state, "unsupported match policy callback");
+            }
+            lua_pop(state, 1);
+        }
+        detail::capture_match_definition(state, *impl);
+        for (std::size_t index = 0; index < policy::kHandlers.size(); ++index) {
+            if (!capture_handler(
+                    state, 1, policy::kHandlers[index].data(), impl->matchReferences[index])
+                || (impl->matchReferences[index] == LUA_NOREF
+                    && policy::required(static_cast<policy::Kind>(index), impl->matchDefinition))) {
+                return luaL_error(state, "match policy requires every typed callback");
+            }
+        }
+        return 0;
+    }
     for (const std::string_view key : api::kRefusedProgramKeys) {
         lua_pushlstring(state, key.data(), key.size());
         lua_rawget(state, 1);
@@ -234,7 +264,12 @@ static_assert(std::size(api::kEvents) == host::kEventKindCount);
     return 0;
 }
 
-void preserve_failure_and_close(Impl& impl) noexcept {
+void preserve_failure_and_close(Impl& impl, bool deferClose = false) noexcept {
+    if (deferClose) {
+        impl.active = false;
+        impl.faulted = true;
+        return;
+    }
     const std::array<char, 256> error = impl.lastError;
     detail::destroy_state(impl);
     impl.lastError = error;
@@ -257,14 +292,13 @@ failed_call_status(const Impl& impl, const CallFrame& frame, int luaStatus) noex
 
 // Past three quarters of the arena a step cannot keep up, so a full collection runs; below
 // that the step is charged 64 KiB at a time.
-constexpr std::size_t kCollectionPressureBytes = (kArenaByteCapacity * 3U) / 4U;
 constexpr int kCollectionStepKilobytes = 64;
 
 /** Advances collection only after Lua has left a protected transaction. */
 void collect_after_transaction(Impl& impl) noexcept {
     if (impl.state != nullptr) {
         const int operation =
-            impl.arena.used >= kCollectionPressureBytes ? LUA_GCCOLLECT : LUA_GCSTEP;
+            impl.arena.used >= (impl.arena.capacity * 3U) / 4U ? LUA_GCCOLLECT : LUA_GCSTEP;
         const int amount = operation == LUA_GCSTEP ? kCollectionStepKilobytes : 0;
         static_cast<void>(lua_gc(impl.state, operation, amount));
         static_cast<void>(lua_gc(impl.state, LUA_GCSTOP, 0));
@@ -418,7 +452,9 @@ void initialize_candidate(const Impl& impl, Candidate& candidate) noexcept {
                                 Handler handler,
                                 const host::Event* event,
                                 const host::ClientMessageSnapshot* clientMessage,
-                                std::uint64_t now) noexcept {
+                                std::uint64_t now,
+                                const MatchRequest* matchRequest = nullptr,
+                                MatchResponse* matchResponse = nullptr) noexcept {
     if (!impl.active || impl.state == nullptr || impl.faulted) {
         return CallStatus::inactive;
     }
@@ -431,6 +467,10 @@ void initialize_candidate(const Impl& impl, Candidate& candidate) noexcept {
         return CallStatus::scriptError;
     }
     frame.handler = handler;
+    frame.matchRequest = matchRequest;
+    if (handler == Handler::match) {
+        frame.remainingInstructions = kMatchDecisionInstructionBudget;
+    }
     frame.event = event;
     frame.clientMessage = clientMessage;
     frame.now = now;
@@ -465,7 +505,11 @@ void initialize_candidate(const Impl& impl, Candidate& candidate) noexcept {
         }
         return CallStatus::noHandler;
     }
-    return commit_candidate(impl, frame.candidate);
+    const auto committed = commit_candidate(impl, frame.candidate);
+    if (committed == CallStatus::committed && matchResponse != nullptr) {
+        *matchResponse = frame.matchResponse;
+    }
+    return committed;
 }
 
 } // namespace
@@ -546,34 +590,37 @@ OpenStatus open(Vm& vm,
     // The build id is the 7-byte "sha256:" prefix plus 64 hex digits, 71 characters total.
     constexpr std::string_view kSdkBuildIdPrefix = "sha256:";
     constexpr std::size_t kSdkBuildIdLength = kSdkBuildIdPrefix.size() + 64;
-    if (identity.sdkBuildId.back() != '\0'
-        || std::strlen(identity.sdkBuildId.data()) != kSdkBuildIdLength
-        || std::string_view(identity.sdkBuildId.data(), kSdkBuildIdPrefix.size())
-               != kSdkBuildIdPrefix
-        || identity.activityId.back() != '\0' || identity.activityId.front() == '\0'
-        || definitions.resolveSquadRow == nullptr || definitions.resolveSquadId == nullptr
-        || definitions.resolveSceneRow == nullptr || definitions.resolveSceneId == nullptr
-        || definitions.resolveSlotRow == nullptr || definitions.resolveSlotId == nullptr
-        || definitions.resolveSenseSlot == nullptr
-        || definitions.resolveActivityMessageRow == nullptr
-        || definitions.resolveActivityMessageId == nullptr
-        || definitions.resolveActivityMessageName == nullptr
-        || definitions.resolveActivityMessageFieldRow == nullptr
-        || definitions.resolveActivityMessageFieldIndex == nullptr
-        || definitions.resolveActivityBinding == nullptr
-        || definitions.activityBindingTagCount == nullptr
-        || definitions.resolveActivityBindingTag == nullptr
-        || definitions.activityBindingLocatorCount == nullptr
-        || definitions.resolveActivityBindingLocator == nullptr || definitions.squadCount == nullptr
-        || definitions.sceneCount == nullptr || definitions.slotCount == nullptr
-        || definitions.activityMessageCount == nullptr) {
+    if (identity.activityId.back() != '\0' || identity.activityId.front() == '\0'
+        || (!identity.matchPolicy
+            && (identity.sdkBuildId.back() != '\0'
+                || std::strlen(identity.sdkBuildId.data()) != kSdkBuildIdLength
+                || std::string_view(identity.sdkBuildId.data(), kSdkBuildIdPrefix.size())
+                       != kSdkBuildIdPrefix
+                || definitions.resolveSquadRow == nullptr || definitions.resolveSquadId == nullptr
+                || definitions.resolveSceneRow == nullptr || definitions.resolveSceneId == nullptr
+                || definitions.resolveSlotRow == nullptr || definitions.resolveSlotId == nullptr
+                || definitions.resolveSenseSlot == nullptr
+                || definitions.resolveActivityMessageRow == nullptr
+                || definitions.resolveActivityMessageId == nullptr
+                || definitions.resolveActivityMessageName == nullptr
+                || definitions.resolveActivityMessageFieldRow == nullptr
+                || definitions.resolveActivityMessageFieldIndex == nullptr
+                || definitions.resolveActivityBinding == nullptr
+                || definitions.activityBindingTagCount == nullptr
+                || definitions.resolveActivityBindingTag == nullptr
+                || definitions.activityBindingLocatorCount == nullptr
+                || definitions.resolveActivityBindingLocator == nullptr
+                || definitions.squadCount == nullptr || definitions.sceneCount == nullptr
+                || definitions.slotCount == nullptr
+                || definitions.activityMessageCount == nullptr))) {
         detail::set_error(impl, "mission identity or SDK definition bridge is invalid");
         impl.faulted = true;
         return OpenStatus::invalidProgram;
     }
     impl.identity = identity;
     impl.definitions = definitions;
-    if (!detail::arena_initialize(impl.arena)) {
+    if (!detail::arena_initialize(
+            impl.arena, identity.matchPolicy ? kMatchArenaByteCapacity : kArenaByteCapacity)) {
         detail::set_error(impl, "mission arena block could not be taken from the heap");
         impl.faulted = true;
         return OpenStatus::outOfMemory;
@@ -581,14 +628,14 @@ OpenStatus open(Vm& vm,
     impl.state = lua_newstate(&detail::arena_allocate, &impl.arena);
     if (impl.state == nullptr) {
         detail::set_error(impl, "Lua state exceeded its fixed arena");
-        preserve_failure_and_close(impl);
+        preserve_failure_and_close(impl, identity.matchPolicy && identity.deferFailedMatchClose);
         return OpenStatus::outOfMemory;
     }
     static_cast<void>(lua_gc(impl.state, LUA_GCSTOP, 0));
     if (!detail::initialize_sandbox(impl)) {
         const OpenStatus status =
             contains_error(impl, "memory") ? OpenStatus::outOfMemory : OpenStatus::runtimeError;
-        preserve_failure_and_close(impl);
+        preserve_failure_and_close(impl, identity.matchPolicy && identity.deferFailedMatchClose);
         return status;
     }
     const int compiled =
@@ -598,12 +645,13 @@ OpenStatus open(Vm& vm,
             impl, existing_error(impl.state, "mission compile failed with a non-string error"));
         const OpenStatus status =
             compiled == LUA_ERRMEM ? OpenStatus::outOfMemory : OpenStatus::compileError;
-        preserve_failure_and_close(impl);
+        preserve_failure_and_close(impl, identity.matchPolicy && identity.deferFailedMatchClose);
         return status;
     }
 
     CallFrame loadFrame{};
-    loadFrame.remainingInstructions = kInitializationInstructionBudget;
+    loadFrame.remainingInstructions =
+        identity.matchPolicy ? kMatchDecisionInstructionBudget : kInitializationInstructionBudget;
     impl.frame = &loadFrame;
     lua_sethook(impl.state, &instruction_hook, LUA_MASKCOUNT, kHookInterval);
     const int executed = lua_pcall(impl.state, 0, 1, 0);
@@ -619,7 +667,7 @@ OpenStatus open(Vm& vm,
         const OpenStatus status = executed == LUA_ERRMEM || loadFrame.memoryExceeded
                                       ? OpenStatus::outOfMemory
                                       : OpenStatus::runtimeError;
-        preserve_failure_and_close(impl);
+        preserve_failure_and_close(impl, identity.matchPolicy && identity.deferFailedMatchClose);
         return status;
     }
     lua_pushcfunction(impl.state, &capture_program);
@@ -630,13 +678,71 @@ OpenStatus open(Vm& vm,
             impl, existing_error(impl.state, "mission declaration failed with a non-string error"));
         const OpenStatus status =
             captured == LUA_ERRMEM ? OpenStatus::outOfMemory : OpenStatus::invalidProgram;
-        preserve_failure_and_close(impl);
+        preserve_failure_and_close(impl, identity.matchPolicy && identity.deferFailedMatchClose);
         return status;
     }
     lua_settop(impl.state, 0);
     impl.active = true;
     impl.faulted = false;
     return OpenStatus::ready;
+}
+
+OpenStatus open_match_policy(Vm& vm, std::span<const char> source, bool deferFailedClose) noexcept {
+    ProgramIdentity identity{};
+    constexpr std::string_view name = "match_policy";
+    std::copy(name.begin(), name.end(), identity.activityId.begin());
+    identity.matchPolicy = true;
+    identity.deferFailedMatchClose = deferFailedClose;
+    // A lexical library keeps callbacks shared without exposing require, files or native APIs.
+    HMODULE module{};
+    const bool located = GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS
+                                                | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                            reinterpret_cast<LPCWSTR>(&open_match_policy),
+                                            &module)
+                         != 0;
+    const auto resource =
+        located ? FindResourceW(module, MAKEINTRESOURCEW(IDR_MATCH_COMMON), RT_RCDATA) : nullptr;
+    const auto handle = resource ? LoadResource(module, resource) : nullptr;
+    const auto* data = handle ? static_cast<const char*>(LockResource(handle)) : nullptr;
+    const auto size = resource ? SizeofResource(module, resource) : 0U;
+    constexpr std::string_view prefix = "local common = (function()\n";
+    constexpr std::string_view suffix = "\nend)()\n";
+    source = compile_source(source);
+    const auto total = prefix.size() + size + suffix.size() + source.size();
+    if (data == nullptr || size == 0 || total > kSourceByteCapacity) {
+        auto& impl = VmAccess::get(vm);
+        detail::set_error(impl, "match library unavailable or combined source exceeds limit");
+        preserve_failure_and_close(impl, deferFailedClose);
+        return OpenStatus::invalidProgram;
+    }
+    std::unique_ptr<char[]> combined(new (std::nothrow) char[total]);
+    if (!combined) {
+        auto& impl = VmAccess::get(vm);
+        detail::set_error(impl, "match source allocation failed");
+        preserve_failure_and_close(impl, deferFailedClose);
+        return OpenStatus::outOfMemory;
+    }
+    auto* next = std::copy(prefix.begin(), prefix.end(), combined.get());
+    next = std::copy_n(data, size, next);
+    next = std::copy(suffix.begin(), suffix.end(), next);
+    std::copy(source.begin(), source.end(), next);
+    return open(vm, identity, {}, {combined.get(), total});
+}
+
+CallStatus evaluate_match(Vm& vm, const MatchRequest& input, MatchResponse& output) noexcept {
+    namespace policy = state::activity::match_state::script_policy;
+    auto& impl = VmAccess::get(vm);
+    if (!impl.identity.matchPolicy || input.kind >= policy::Kind::count || !impl.active
+        || impl.state == nullptr || impl.faulted) {
+        return CallStatus::inactive;
+    }
+    if (input.kind == policy::Kind::definition) {
+        MatchResponse candidate{};
+        candidate.definition = impl.matchDefinition;
+        output = candidate;
+        return CallStatus::committed;
+    }
+    return invoke(impl, Handler::match, nullptr, nullptr, 0, &input, &output);
 }
 
 /**
