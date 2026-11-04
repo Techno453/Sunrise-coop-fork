@@ -227,6 +227,11 @@ void configure_generated_require(lua_State* state, const ProgramIdentity& identi
     lua_setfield(state, -2, "randomseed");
     lua_pop(state, 1);
 
+    // Match decisions have no mission handles or mutation APIs.
+    if (impl->identity.matchPolicy) {
+        return 0;
+    }
+
     // One call per domain. A domain owns its own metatable list, so adding a type never edits
     // this function.
     register_context_metatables(state);
@@ -308,6 +313,9 @@ int protected_callback(lua_State* state) {
     if (!lua_isfunction(state, -1)) {
         return luaL_error(state, "mission entry is no longer a function");
     }
+    if (frame.handler == Handler::match) {
+        return call_match_policy(state);
+    }
     push_context(state);
     push_state(state);
     int arguments = 2;
@@ -369,6 +377,8 @@ void destroy_state(Impl& impl) noexcept {
     impl.startReference = LUA_NOREF;
     impl.eventReferences.fill(LUA_NOREF);
     impl.loadReference = LUA_NOREF;
+    impl.matchReferences.fill(LUA_NOREF);
+    impl.matchDefinition = {};
     impl.hasInitialState = false;
     impl.active = false;
     impl.faulted = false;

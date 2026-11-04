@@ -157,7 +157,14 @@ void release(Arena& arena, void* pointer) noexcept {
 } // namespace
 
 /** Takes one block from the heap and lays it out as a single free maximum-aligned span. */
-bool arena_initialize(Arena& arena) noexcept {
+bool arena_initialize(Arena& arena, std::size_t capacity) noexcept {
+    if (capacity < kHeaderSize + kAlignment || capacity > kArenaByteCapacity
+        || capacity % kAlignment != 0) {
+        return false;
+    }
+    if (arena.bytes != nullptr && arena.capacity != capacity) {
+        arena_release(arena);
+    }
     // operator new[] returns at least this alignment, which is what every payload here needs.
     static_assert(__STDCPP_DEFAULT_NEW_ALIGNMENT__ >= kAlignment);
     arena.used = 0;
@@ -166,14 +173,13 @@ bool arena_initialize(Arena& arena) noexcept {
     if (arena.bytes == nullptr) {
         // The allocation function is called directly. Clang folds the nothrow array
         // new-expression to null in the optimized build; delete[] still matches this storage.
-        auto* const block =
-            static_cast<std::byte*>(::operator new[](kArenaByteCapacity, std::nothrow));
+        auto* const block = static_cast<std::byte*>(::operator new[](capacity, std::nothrow));
         if (block == nullptr) {
             arena.capacity = 0;
             return false;
         }
         arena.bytes.reset(block);
-        arena.capacity = kArenaByteCapacity;
+        arena.capacity = capacity;
     }
     ArenaBlock* const block = first_block(arena);
     block->size = arena.capacity - kHeaderSize;

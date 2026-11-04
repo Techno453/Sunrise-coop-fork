@@ -6,6 +6,7 @@
 #include <span>
 #include <string_view>
 
+#include "../../../state/activity/match_state/script_policy.h"
 #include "../../../state/activity_sdk/format.h"
 #include "../../../state/mods/definition.h"
 #include "../host_runtime.h"
@@ -24,6 +25,8 @@ struct VmAccess;
 
 /** Lua ceiling per open program. The largest generated module peaks near 23 MiB. */
 inline constexpr std::size_t kArenaByteCapacity = 64U * 1024U * 1024U;
+/** Each match program owns a bounded, isolated heap. */
+inline constexpr std::size_t kMatchArenaByteCapacity = 1024U * 1024U;
 inline constexpr std::size_t kVariableCapacity = state::activity::mission::kVariableCapacity;
 inline constexpr std::size_t kTimerCapacity = state::activity::mission::kTimerCapacity;
 inline constexpr std::size_t kStateKeyByteCapacity =
@@ -36,6 +39,8 @@ inline constexpr std::size_t kSquadMemberCapacity = state::activity::mission::kS
 inline constexpr std::size_t kSourceByteCapacity = 128U * 1024U;
 /** One callback is stopped after this many approximate VM instructions. */
 inline constexpr std::uint32_t kInstructionBudget = 5'000'000;
+/** Match decisions execute within a score transaction and have a much smaller budget. */
+inline constexpr std::uint32_t kMatchDecisionInstructionBudget = 20'000;
 /** Generated mission modules are large declarations and execute only while a VM opens. */
 inline constexpr std::uint32_t kInitializationInstructionBudget = 100'000'000;
 /** Stable storage holds everything but the arena block, which the open program owns. */
@@ -95,6 +100,10 @@ struct ProgramIdentity final {
     SaveFlagWriter writeSaveFlags{};
     /** Exact ActivityClient directory selected for this VM. */
     bool publicTarget{};
+    /** Restricted match decision program: no SDK, mission handles or output intents. */
+    bool matchPolicy{};
+    /** Match owner retires a failed initialization after its State transaction unlocks. */
+    bool deferFailedMatchClose{};
 };
 
 /** One activity-local squad row resolved against the pinned SDK view. */
@@ -563,6 +572,16 @@ private:
  */
 [[nodiscard]] bool
 check_syntax(std::span<const char> source, const char* chunkName, std::span<char> error) noexcept;
+
+using MatchRequest = state::activity::match_state::script_policy::Request;
+using MatchResponse = state::activity::match_state::script_policy::Response;
+
+/** Opens a restricted text-only match decision program using this VM's sandbox and budgets. */
+[[nodiscard]] OpenStatus
+open_match_policy(Vm& vm, std::span<const char> source, bool deferFailedClose = false) noexcept;
+/** Returns a candidate only after the protected callback succeeds; failure leaves output intact. */
+[[nodiscard]] CallStatus
+evaluate_match(Vm& vm, const MatchRequest& input, MatchResponse& output) noexcept;
 
 /** Opens one text-only, build-matched program in a fresh sandbox. */
 [[nodiscard]] OpenStatus open(Vm& vm,

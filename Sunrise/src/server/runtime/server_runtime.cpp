@@ -13,6 +13,7 @@
 #include "../../core/settings/settings.h"
 #include "../../core/threading/srw_lock.h"
 #include "../activity/host_runtime.h"
+#include "../activity/match_script_runtime.h"
 #include "../activity/mission/mission_script_runtime.h"
 #include "../bap/runtime.h"
 #include "../gameplay/gameplay_runtime.h"
@@ -74,7 +75,9 @@ bool initialize() noexcept {
     }
     activity::host::reset();
     activity::mission::initialize();
+    activity::match_scripts::initialize();
     if (!client::network::register_http_consumer(&http::consume)) {
+        activity::match_scripts::shutdown();
         activity::mission::shutdown();
         return false;
     }
@@ -87,6 +90,7 @@ bool initialize() noexcept {
             if (core::settings::hosts_session() || core::settings::get().server.upstream.enabled) {
                 client::network::unregister_bap_consumer(&bap::consume);
                 client::network::unregister_http_consumer(&http::consume);
+                activity::match_scripts::shutdown();
                 activity::mission::shutdown();
                 return false;
             }
@@ -101,6 +105,7 @@ bool initialize() noexcept {
                 transport::shutdown();
                 client::network::unregister_bap_consumer(&bap::consume);
                 client::network::unregister_http_consumer(&http::consume);
+                activity::match_scripts::shutdown();
                 activity::mission::shutdown();
                 return false;
             }
@@ -115,6 +120,7 @@ bool initialize() noexcept {
     }
     // BAP registration failure rolls back the earlier HTTP registration.
     client::network::unregister_http_consumer(&http::consume);
+    activity::match_scripts::shutdown();
     activity::mission::shutdown();
     return false;
 }
@@ -265,6 +271,7 @@ void shutdown() noexcept {
     bap::shutdown();
     studio::shutdown_investment();
     studio::shutdown();
+    activity::match_scripts::shutdown();
     activity::mission::shutdown();
     activity::host::reset();
     g_window = {};
