@@ -90,10 +90,14 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="resources\default_settings.json" />
+    <None Include="resources\scripts\matches\common.lua" />
+    <None Include="resources\scripts\matches\rumble.lua" />
+    <None Include="resources\scripts\matches\control.lua" />
     <None Include="resources\logo_sheet.png" />
     <None Include="src\middleware\bap\activity_message\wire_schema\activity_communication_route_data.inc" />
     <None Include="src\middleware\bap\activity_message\wire_schema\activity_wire_schema_data.inc" />
     <None Include="src\middleware\bap\activity_message\wire_schema\activity_wire_field_doc_data.inc" />
+    <None Include="src\middleware\bap\activity_message\kill_incident_schema_data.inc" />
     <None Include="vendor\detours\LICENSE.md" />
     <None Include="vendor\imgui\LICENSE.txt" />
     <None Include="vendor\lua\LICENSE" />
@@ -1000,8 +1004,10 @@
     <ClCompile Include="src\server\activity\activity_sdk_mission_runtime.cpp" />
     <ClCompile Include="src\server\activity\activity_sdk_scene_cast.cpp" />
     <ClCompile Include="src\server\activity\activity_sdk_scene_spawn.cpp" />
+    <ClCompile Include="src\server\activity\match_script_runtime.cpp" />
     <ClCompile Include="src\server\activity\mission\mission_script_arena.cpp" />
     <ClCompile Include="src\server\activity\mission\mission_script_lua_sandbox.cpp" />
+    <ClCompile Include="src\server\activity\mission\mission_script_lua_match.cpp" />
     <ClCompile Include="src\server\activity\mission\mission_script_lua_collection_api.cpp" />
     <ClCompile Include="src\server\activity\mission\mission_script_lua_context_api.cpp" />
     <ClCompile Include="src\server\activity\mission\mission_script_lua_population_api.cpp" />
@@ -2586,6 +2592,7 @@
     <ClInclude Include="src\server\activity\activity_sdk_lifetime_runtime.h" />
     <ClInclude Include="src\server\activity\activity_sdk_squad_runtime.h" />
     <ClInclude Include="src\server\activity\activity_sdk_mission_runtime.h" />
+    <ClInclude Include="src\server\activity\match_script_runtime.h" />
     <ClInclude Include="src\server\activity\mission\mission_script_message_catalog.h" />
     <ClInclude Include="src\server\activity\mission\mission_script_runtime.h" />
     <ClInclude Include="src\server\activity\mission\mission_script_variable_log.h" />
@@ -3368,6 +3375,60 @@
     <ClInclude Include="src\server\activity\mission\mission_script_runtime_objective.h" />
     <ClInclude Include="src\server\ui\activity_host\activity_host_sdk_actor_sequences.h" />
     <ClInclude Include="src\state\build_data\items\quest_initialization.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="src\client\content\items\packages\package_activity_options.cpp" />
+    <ClCompile Include="src\middleware\bap\activity_message\activity_sensor_sense_parser.cpp" />
+    <ClInclude Include="src\middleware\bap\activity_message\capture_zone_auth.h" />
+    <ClInclude Include="src\middleware\bap\activity_message\cinematic_record.h" />
+    <ClInclude Include="src\middleware\bap\activity_message\match_object_auth.h" />
+    <ClInclude Include="src\middleware\bap\activity_message\object_marker_auth.h" />
+    <ClInclude Include="src\middleware\bap\activity_message\incident_player_roles.h" />
+    <ClCompile Include="src\middleware\bap\activity_message\incident_target_resolver.cpp" />
+    <ClCompile Include="src\middleware\bap\activity_message\kill_incident_codec.cpp" />
+    <ClInclude Include="src\middleware\bap\activity_message\kill_incident_codec.h" />
+    <ClInclude Include="src\middleware\bap\activity_message\sensor_sense_update.h" />
+    <ClInclude Include="src\middleware\content\packages\tables\activity_options.h" />
+    <ClCompile Include="src\middleware\content\packages\tables\activity_options_parser.cpp" />
+    <ClInclude Include="src\middleware\content\packages\tables\activity_rules.h" />
+    <ClInclude Include="src\middleware\content\packages\tables\activity_settings.h" />
+    <ClCompile Include="src\middleware\content\packages\tables\activity_rules_parser.cpp" />
+    <ClCompile Include="src\middleware\content\packages\tables\incident_targets.cpp" />
+    <ClInclude Include="src\middleware\content\packages\tables\incident_targets.h" />
+    <ClCompile Include="src\middleware\content\packages\tables\statistic_program.cpp" />
+    <ClInclude Include="src\middleware\content\packages\tables\statistic_program.h" />
+    <ClInclude Include="src\server\bap\encrypted\push\activity\activity_match_definition.h" />
+    <ClInclude Include="src\server\bap\encrypted\push\activity\activity_match_publication.h" />
+    <ClCompile Include="src\server\bap\encrypted\push\activity\activity_match_snapshot.cpp" />
+    <ClInclude Include="src\server\bap\encrypted\push\activity\activity_match_snapshot.h" />
+    <ClInclude Include="src\server\bap\encrypted\push\activity\activity_scoreboard_teams.h" />
+    <ClCompile Include="src\state\activity\activity_clock\activity_clock.cpp" />
+    <ClInclude Include="src\state\activity\activity_clock\definition.h" />
+    <ClInclude Include="src\state\activity\activity_clock\runtime.h" />
+    <ClCompile Include="src\state\activity\activity_timer\activity_timer_from_selection.cpp" />
+    <ClInclude Include="src\state\activity\activity_timer\definition.h" />
+    <ClInclude Include="src\state\activity\activity_timer\from_selection.h" />
+    <ClCompile Include="src\state\activity\match_modes\control.cpp" />
+    <ClInclude Include="src\state\activity\match_modes\control.h" />
+    <ClInclude Include="src\state\activity\match_modes\definition.h" />
+    <ClInclude Include="src\state\activity\match_modes\lifecycle.h" />
+    <ClCompile Include="src\state\activity\match_modes\match_mode_registry.cpp" />
+    <ClCompile Include="src\state\activity\match_modes\rumble.cpp" />
+    <ClInclude Include="src\state\activity\match_modes\rumble.h" />
+    <ClCompile Include="src\state\activity\match_state\activity_event_statistics.cpp" />
+    <ClCompile Include="src\state\activity\match_state\activity_match_lifecycle.cpp" />
+    <ClCompile Include="src\state\activity\match_state\activity_match_state.cpp" />
+    <ClInclude Include="src\state\activity\match_state\script_policy.h" />
+    <ClInclude Include="src\state\activity\match_state\definition.h" />
+    <ClInclude Include="src\state\activity\match_state\member.h" />
+    <ClInclude Include="src\state\activity\match_state\runtime.h" />
+    <ClCompile Include="src\state\build_data\activity_options\activity_options.cpp" />
+    <ClInclude Include="src\state\build_data\activity_options\definition.h" />
+    <ClInclude Include="src\state\build_data\activity_options\runtime.h" />
+    <ClCompile Include="src\state\build_data\activity_rules\activity_rules.cpp" />
+    <ClInclude Include="src\state\build_data\activity_rules\runtime.h" />
+    <ClCompile Include="src\server\bap\encrypted\push\activity\activity_match_events.cpp" />
+    <ClInclude Include="src\server\bap\encrypted\push\activity\activity_match_events.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <!-- Names the commit this module is built from, so co-op peers that built the same unmodified
