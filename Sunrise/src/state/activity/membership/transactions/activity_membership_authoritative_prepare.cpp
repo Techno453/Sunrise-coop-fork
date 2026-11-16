@@ -19,13 +19,20 @@ bool prepare_authoritative(std::uint64_t sessionId,
     const auto primarySoid = account_primary_soid(bound_account());
     AcquireSRWLockShared(&runtime::storage::g_stateLock);
     const auto& root = runtime::storage::g_state;
+    // A blob reporting -1 holds no partition yet; the client keeps that sentinel until the host
+    // serves one. Kept, it would be served back, and the client never spawns a body.
+    AuthoritativeUpdate accepted = update;
+    if (accepted.hasAssignedPartition && accepted.assignedPartition < 0) {
+        accepted.assignedPartition = -1;
+        accepted.hasAssignedPartition = false;
+    }
     PendingMutation prepared{};
     const SessionRecord* record =
         transactions::prepare_base(root.activity, primarySoid, sessionId, prepared);
     const auto* member = record ? member_state(*record, prepared.memberRow) : nullptr;
     bool ready = record != nullptr;
     if (ready) {
-        const MembershipState merged = transactions::merge(*member, update);
+        const MembershipState merged = transactions::merge(*member, accepted);
         const bool changed = !transactions::equal_authoritative(*member, merged);
         const bool revisionExhausted =
             root.activity.stateRevision == activity::kMaximumRevision
@@ -33,8 +40,8 @@ bool prepare_authoritative(std::uint64_t sessionId,
         if (changed && revisionExhausted) {
             ready = false;
         } else {
-            prepared.authoritativeInput = update;
-            prepared.authoritativeGuard = update;
+            prepared.authoritativeInput = accepted;
+            prepared.authoritativeGuard = accepted;
             prepared.kind = MutationKind::authoritative;
             prepared.changesState = changed;
             prepared.movesRegion = transactions::moves_region(*member, merged);
