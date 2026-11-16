@@ -6,7 +6,6 @@
 #include <atomic>
 #include <cstring>
 
-#include "../../../core/network_lan.h"
 #include "../../../core/network_service_socket.h"
 #include "../../../core/settings/settings.h"
 #include "../../../middleware/crypto/random_bytes.h"
@@ -63,8 +62,6 @@ std::atomic<unsigned> g_reported{0};
 std::atomic<unsigned> g_traversalReported{0};
 std::atomic<unsigned> g_carrierReceived{}, g_carrierRelayed{}, g_carrierDenied{},
     g_carrierDropped{};
-/** Datagrams from outside the local network, dropped before any routing. */
-std::atomic<unsigned> g_notLan{};
 std::uint64_t g_carrierReportTick{};
 
 /** @return A pool with every slot unbound. Zero is a usable descriptor, so it cannot mark one. */
@@ -350,15 +347,6 @@ bind_one(std::uint32_t bindAddress, std::uint16_t port, SOCKET& output) noexcept
     }
     from.address = ntohl(source.sin_addr.s_addr);
     from.port = ntohs(source.sin_port);
-    if (!core::network_lan::lan_address(from.address)) {
-        if (g_notLan.fetch_add(1, std::memory_order_relaxed) < kMaxReceiveReports) {
-            report(core::log::Level::warn,
-                   "ev=gameplay stage=receive result=refused reason=not_lan from=0x%08X",
-                   from.address);
-        }
-        size = 0;
-        return true;
-    }
     // The peer sends every channel from one source port, so the port it dialled is the only thing
     // that tells two links from the same peer apart. Everything downstream keys on it.
     from.localPort = localPort;
@@ -693,9 +681,7 @@ void service(std::uint64_t now) noexcept {
                                   false)) {
                     break;
                 }
-                if (size != 0) {
-                    route_datagram(slot, from, buffer, size, now);
-                }
+                route_datagram(slot, from, buffer, size, now);
             }
         }
     }
@@ -703,13 +689,11 @@ void service(std::uint64_t now) noexcept {
     if (carrier && now - g_carrierReportTick >= kCarrierReportIntervalMs) {
         g_carrierReportTick = now;
         report(core::log::Level::info,
-               "ev=single_port stage=traffic received=%u relayed=%u denied=%u dropped=%u "
-               "not_lan=%u",
+               "ev=single_port stage=traffic received=%u relayed=%u denied=%u dropped=%u",
                g_carrierReceived.load(),
                g_carrierRelayed.load(),
                g_carrierDenied.load(),
-               g_carrierDropped.load(),
-               g_notLan.load());
+               g_carrierDropped.load());
     }
 }
 

@@ -3318,7 +3318,6 @@
     <ClCompile Include="src\state\network\peer_routes.cpp" />
     <ClInclude Include="src\state\network\peer_routes.h" />
     <ClInclude Include="src\core\network_capacity.h" />
-    <ClInclude Include="src\core\network_lan.h" />
     <ClInclude Include="src\state\coop\compatibility.h" />
     <ClInclude Include="src\state\coop\channel_key.h" />
     <ClInclude Include="src\middleware\crypto\ecdh_p256.h" />
