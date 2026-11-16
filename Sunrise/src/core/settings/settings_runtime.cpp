@@ -12,7 +12,6 @@
 #include "../filesystem/path.h"
 #include "../filesystem/temporary_sibling.h"
 #include "../logging/log.h"
-#include "../network_lan.h"
 #include "parser.h"
 #include "settings.h"
 #include "settings_upgrade.h"
@@ -20,23 +19,6 @@
 
 namespace sunrise::core::settings {
 namespace {
-
-/** @return True when every address co-op binds, advertises or dials is on the local network. */
-[[nodiscard]] bool lan_only(const Settings& parsed, Role role) noexcept {
-    using network_lan::lan_address;
-    using network_lan::lan_bind;
-    if (!parsed.multiplayerEnabled) {
-        return true;
-    }
-    const auto& gameplay = parsed.server.gameplay;
-    if (role == Role::host
-        && (!lan_bind(parsed.server.bapBind) || !lan_bind(gameplay.bindAddress)
-            || !lan_address(gameplay.advertisedAddress)
-            || !lan_address(gameplay.transportAddress))) {
-        return false;
-    }
-    return !parsed.server.upstream.enabled || lan_address(parsed.server.upstream.address);
-}
 
 /** The JSON settings file is the only file stored directly in the owned folder. */
 constexpr std::wstring_view kSettingsFileSuffix = L"\\settings.json";
@@ -312,9 +294,6 @@ bool initialize(void* module) noexcept {
         if (parsed.server.gameplay.topology != server::gameplay::Topology::embedded) {
             return fail("host_gameplay");
         }
-    }
-    if (!lan_only(parsed, selectedRole)) {
-        return fail("lan_only");
     }
     for (std::size_t i = 0; i < parsed.server.upstream.host.size(); ++i) {
         parsed.server.upstream.hostWide[i] = static_cast<wchar_t>(parsed.server.upstream.host[i]);
