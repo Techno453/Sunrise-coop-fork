@@ -6,6 +6,23 @@
 #include "fireteam.h"
 
 namespace sunrise::state::activity::fireteam {
+namespace {
+/** @return True when an account the server links with `member` publishes `groupKey`. */
+bool linked_group(std::uint64_t member, std::uint32_t groupKey) noexcept {
+    for (AccountHandle handle = 0; handle < account_count(); ++handle) {
+        const auto soid = account_primary_soid(handle);
+        if (soid == 0 || soid == member || !connected(member, soid)) {
+            continue;
+        }
+        const auto presence = account::profiles::native_presence(handle);
+        if (presence.hasGroup && presence.groupKey == groupKey) {
+            return true;
+        }
+    }
+    return false;
+}
+} // namespace
+
 bool request_join(std::uint64_t joiner, std::uint64_t target) noexcept {
     if (!joiner || !target || joiner == target || joiner != account_primary_soid(bound_account())) {
         return false;
@@ -70,6 +87,7 @@ bool native_solo_split(std::uint64_t account,
     return before.published && after.published && before.hasGroup && after.hasGroup
            && before.characterSoid != 0 && before.characterSoid == after.characterSoid
            && after.memberCount == 1 && before.groupKey != after.groupKey
-           && (before.memberCount > 1 || representative(account) != 0);
+           && (before.memberCount > 1 || representative(account) != 0)
+           && !linked_group(account, after.groupKey);
 }
 } // namespace sunrise::state::activity::fireteam
