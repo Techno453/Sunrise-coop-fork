@@ -21,7 +21,9 @@ namespace sunrise::state::activity::fireteam {
  * Detects the same character moving to a new solo group out of a fireteam, whether its previous
  * upload named that fireteam or only the server holds it there. The client uploads its presence
  * when its join descriptor changes, and joining someone else's group changes only the joiner's,
- * so the one who was joined can leave before any upload of theirs counted the joiner.
+ * so the one who was joined can leave before any upload of theirs counted the joiner. A joiner
+ * also moves to a new group and can upload before its member list fills in, after admission
+ * already linked it, so moving into a group a linked account publishes is a join, not a split.
  * @param account Primary account the presence belongs to.
  */
 [[nodiscard]] bool native_solo_split(std::uint64_t account,
