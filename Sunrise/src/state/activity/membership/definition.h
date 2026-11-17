@@ -241,6 +241,30 @@ struct MembershipState final {
     bool hasIdentity{};
 };
 
+/**
+ * @return True once the client's own teleport block shows it latched the armed host teleport:
+ * the request's token and slice set, with its machine past the idle state. A leg naming the
+ * target is not a latch, because the client also names a region it only precaches as it walks
+ * toward it.
+ */
+[[nodiscard]] inline bool host_teleport_latched(const MembershipState& membership) noexcept {
+    return membership.hasHostTeleport && membership.teleportReported
+           && membership.teleport.state != kClientTeleportResetState
+           && membership.teleport.token == membership.hostTeleport.token
+           && membership.teleport.sliceSetIndex == membership.hostTeleport.sliceSetIndex;
+}
+
+/**
+ * @return True while a latched host teleport is under way: the client latched it and names the
+ * target as its pending or current leg, and its spawn is not yet due.
+ */
+[[nodiscard]] inline bool host_teleport_moving(const MembershipState& membership) noexcept {
+    const std::int32_t target = membership.hostTeleport.sliceSetIndex;
+    return membership.hostTeleport.state == kHostTeleportArmedState && target >= 0
+           && (membership.region.index == target || membership.currentRegion.index == target)
+           && host_teleport_latched(membership);
+}
+
 /** Safe numeric after-image produced by one committed message-22 State transaction. */
 struct CommittedClientState final {
     /** Held region before this exact accepted report. */
