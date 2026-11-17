@@ -28,11 +28,20 @@ struct MemberPurge final {
 /** Reads the shared replication sequence for one exact private or public session. */
 [[nodiscard]] bool replication_sequence(const SessionBinding& binding,
                                         std::uint64_t& sequence) noexcept;
-/** Advances the shared sequence once, refusing stale preparations and exhausted counters. */
+/** Slots one member asked the session to purge. */
+struct RequestedPurge final {
+    entity_slots::LeaseMask slots{};
+    std::uint64_t memberKey{};
+};
+/**
+ * Advances the shared sequence once, refusing stale preparations and exhausted counters. A
+ * requested purge is owed to every other joined member at the new step.
+ */
 [[nodiscard]] bool
 advance_replication_sequence(const SessionBinding& binding,
                              std::uint64_t expected,
-                             const MemberPurge* deliveredPurge = nullptr) noexcept;
+                             const MemberPurge* deliveredPurge = nullptr,
+                             const RequestedPurge* requestedPurge = nullptr) noexcept;
 /** Consumes the exact native member's connection departure without disbanding its fireteam. */
 [[nodiscard]] bool depart_member(const SessionBinding& binding,
                                  std::uint64_t accountSoid,

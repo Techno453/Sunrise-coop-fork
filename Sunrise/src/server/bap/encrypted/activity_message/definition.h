@@ -131,6 +131,7 @@ struct AuthorityPurgeIngress final {
     middleware::bap::activity_message::host_control::PurgeAuthorityBody body{};
     state::activity::MemberPurge departure{};
     state::activity::SessionBinding binding{};
+    std::uint64_t memberKey{};
     std::uint64_t expectedSequence{};
     std::uint64_t sourceGeneration{};
     bool pending{};
