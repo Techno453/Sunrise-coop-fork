@@ -30,10 +30,15 @@ auto selected_member(Record& record) noexcept -> decltype(member_state(record, 0
                                    context.sessionId == record.sessionId ? context.memberKey : 0,
                                    account_primary_soid(account)));
 }
-/** @return True when an armed teleport names the region the client now holds. */
+/**
+ * @return True when a latched teleport names the region the client now holds. A client that
+ * walked in on its own never latched the move, and its idle step refuses the spawn state, so
+ * raising it would hold that client's loading screen forever.
+ */
 [[nodiscard]] bool teleport_arrived(const MembershipState& membership) noexcept {
     return membership.hasHostTeleport && membership.hostTeleport.state == kHostTeleportArmedState
-           && membership.currentRegion.index == membership.hostTeleport.sliceSetIndex;
+           && membership.currentRegion.index == membership.hostTeleport.sliceSetIndex
+           && host_teleport_latched(membership);
 }
 
 } // namespace
@@ -426,12 +431,11 @@ bool host_teleport_armed(std::uint64_t sessionId) noexcept {
     const std::size_t target = activity::transactions::find_session(state, sessionId);
     if (target != kInvalidSessionSlot && selected_member(state.sessions[target]) != nullptr) {
         const MembershipState& membership = *selected_member(state.sessions[target]);
-        // Once the client names the region as its pending or current leg it has the move, and
-        // the arm still rides every body, so it must not keep forcing revisions.
-        const std::int32_t region = membership.hostTeleport.sliceSetIndex;
+        // Once the client latched the move and names the region as a leg the arm still rides
+        // every body, so it must not keep forcing revisions. A leg alone may be a precache.
         armed = membership.hasHostTeleport
                 && membership.hostTeleport.state != kHostTeleportSpawnState
-                && membership.region.index != region && membership.currentRegion.index != region;
+                && !host_teleport_moving(membership);
     }
     ReleaseSRWLockShared(&runtime::storage::g_stateLock);
     return armed;

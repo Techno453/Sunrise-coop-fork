@@ -195,11 +195,9 @@ inline Snapshot make_snapshot(const MembershipState& state,
     // An armed host teleport replaces the mirror, because these are the fields the client's
     // teleport arm reads. Everything else about the block stays the client's own report.
     snapshot.teleport = state.hasHostTeleport ? state.hostTeleport : state.teleport;
-    // Once the client names the target as its pending or current leg it has latched the move.
-    // Until the spawn is due the arm reads as moving, not armed.
-    const std::int32_t target = state.hostTeleport.sliceSetIndex;
-    if (state.hasHostTeleport && state.hostTeleport.state == kHostTeleportArmedState && target >= 0
-        && (state.region.index == target || state.currentRegion.index == target)) {
+    // Until the spawn is due a latched move reads as moving, not armed. A client that only
+    // precached the target still reads the arm, so it latches the move itself.
+    if (host_teleport_moving(state)) {
         snapshot.teleport.state = kHostTeleportMovingState;
     }
     snapshot.currentLeg = state.currentRegion;
