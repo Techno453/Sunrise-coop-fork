@@ -1,5 +1,3 @@
-#include <Windows.h>
-
 #include <algorithm>
 #include <cstddef>
 #include <cstring>
@@ -7,7 +5,6 @@
 #include <memory>
 #include <new>
 
-#include "../../../../resources/resource.h"
 #include "mission_api.h"
 #include "mission_script_lua_resolve.h"
 #include "mission_script_variable_log.h"
@@ -687,29 +684,21 @@ OpenStatus open(Vm& vm,
     return OpenStatus::ready;
 }
 
-OpenStatus open_match_policy(Vm& vm, std::span<const char> source, bool deferFailedClose) noexcept {
+OpenStatus open_match_policy(Vm& vm,
+                             std::span<const char> library,
+                             std::span<const char> source,
+                             bool deferFailedClose) noexcept {
     ProgramIdentity identity{};
     constexpr std::string_view name = "match_policy";
     std::copy(name.begin(), name.end(), identity.activityId.begin());
     identity.matchPolicy = true;
     identity.deferFailedMatchClose = deferFailedClose;
     // A lexical library keeps callbacks shared without exposing require, files or native APIs.
-    HMODULE module{};
-    const bool located = GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS
-                                                | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                                            reinterpret_cast<LPCWSTR>(&open_match_policy),
-                                            &module)
-                         != 0;
-    const auto resource =
-        located ? FindResourceW(module, MAKEINTRESOURCEW(IDR_MATCH_COMMON), RT_RCDATA) : nullptr;
-    const auto handle = resource ? LoadResource(module, resource) : nullptr;
-    const auto* data = handle ? static_cast<const char*>(LockResource(handle)) : nullptr;
-    const auto size = resource ? SizeofResource(module, resource) : 0U;
     constexpr std::string_view prefix = "local common = (function()\n";
     constexpr std::string_view suffix = "\nend)()\n";
     source = compile_source(source);
-    const auto total = prefix.size() + size + suffix.size() + source.size();
-    if (data == nullptr || size == 0 || total > kSourceByteCapacity) {
+    const auto total = prefix.size() + library.size() + suffix.size() + source.size();
+    if (library.empty() || total > kSourceByteCapacity) {
         auto& impl = VmAccess::get(vm);
         detail::set_error(impl, "match library unavailable or combined source exceeds limit");
         preserve_failure_and_close(impl, deferFailedClose);
@@ -723,7 +712,7 @@ OpenStatus open_match_policy(Vm& vm, std::span<const char> source, bool deferFai
         return OpenStatus::outOfMemory;
     }
     auto* next = std::copy(prefix.begin(), prefix.end(), combined.get());
-    next = std::copy_n(data, size, next);
+    next = std::copy(library.begin(), library.end(), next);
     next = std::copy(suffix.begin(), suffix.end(), next);
     std::copy(source.begin(), source.end(), next);
     return open(vm, identity, {}, {combined.get(), total});

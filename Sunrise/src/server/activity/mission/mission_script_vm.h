@@ -576,9 +576,16 @@ check_syntax(std::span<const char> source, const char* chunkName, std::span<char
 using MatchRequest = state::activity::match_state::script_policy::Request;
 using MatchResponse = state::activity::match_state::script_policy::Response;
 
-/** Opens a restricted text-only match decision program using this VM's sandbox and budgets. */
-[[nodiscard]] OpenStatus
-open_match_policy(Vm& vm, std::span<const char> source, bool deferFailedClose = false) noexcept;
+/**
+ * Opens a restricted text-only match decision program using this VM's sandbox and budgets.
+ * @param library Shared match library, run first and visible to the program as `common`.
+ * @param source The mode's policy chunk.
+ * @param deferFailedClose True to keep a failed program open until its caller retires it.
+ */
+[[nodiscard]] OpenStatus open_match_policy(Vm& vm,
+                                           std::span<const char> library,
+                                           std::span<const char> source,
+                                           bool deferFailedClose = false) noexcept;
 /** Returns a candidate only after the protected callback succeeds; failure leaves output intact. */
 [[nodiscard]] CallStatus
 evaluate_match(Vm& vm, const MatchRequest& input, MatchResponse& output) noexcept;

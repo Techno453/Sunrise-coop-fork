@@ -90,9 +90,6 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="resources\default_settings.json" />
-    <None Include="resources\scripts\matches\common.lua" />
-    <None Include="resources\scripts\matches\rumble.lua" />
-    <None Include="resources\scripts\matches\control.lua" />
     <None Include="resources\logo_sheet.png" />
     <None Include="src\middleware\bap\activity_message\wire_schema\activity_communication_route_data.inc" />
     <None Include="src\middleware\bap\activity_message\wire_schema\activity_wire_schema_data.inc" />

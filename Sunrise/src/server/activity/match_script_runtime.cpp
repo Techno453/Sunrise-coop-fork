@@ -12,12 +12,13 @@
 #include <span>
 #include <string_view>
 
-#include "../../../resources/resource.h"
+#include "../../core/filesystem/path.h"
 #include "../../core/logging/log.h"
 #include "../../state/activity/definition.h"
 #include "../../state/activity/match_modes/control.h"
 #include "../../state/activity/match_modes/rumble.h"
 #include "../../state/activity/match_state/script_policy.h"
+#include "../../state/mods/mods_runtime.h"
 #include "mission/mission_script_vm.h"
 
 namespace sunrise::server::activity::match_scripts {
@@ -114,13 +115,21 @@ std::mutex g_lock;
 std::array<Instance, state::activity::kSessionCapacity> g_instances{};
 struct Source final {
     std::uint32_t modeKey{};
-    int resource{};
+    /** File name in a `scripts\matches` folder. */
+    std::wstring_view file;
+    /** The same name for log lines. */
+    std::string_view name;
     std::array<char, vm::kSourceByteCapacity> text{};
     std::size_t size{};
 };
 // Source identity is independent of runtime allocations and selected by the resolved mode key.
-std::array g_sources{Source{state::activity::match_modes::rumble::kMode, IDR_MATCH_RUMBLE},
-                     Source{state::activity::match_modes::control::kMode, IDR_MATCH_CONTROL}};
+std::array g_sources{
+    Source{state::activity::match_modes::rumble::kMode, L"rumble.lua", "rumble.lua"},
+    Source{state::activity::match_modes::control::kMode, L"control.lua", "control.lua"}};
+/** The library every mode's program runs first; no mode opens without it. */
+Source g_library{0, L"common.lua", "common.lua"};
+/** Holds a file while it is read and validated; only `initialize` reads files. */
+std::array<char, vm::kSourceByteCapacity> g_fileBuffer{};
 Source* source_for(std::uint32_t modeKey) noexcept {
     for (auto& source : g_sources) {
         if (source.modeKey == modeKey) {
@@ -149,7 +158,7 @@ void report(std::string_view stage,
                                    static_cast<int>(error.size()),
                                    error.empty() ? "" : error.data());
     if (size > 0 && static_cast<std::size_t>(size) < line.size()) {
-        const bool success = result == "ready" || result == "bundled";
+        const bool success = result == "ready" || result.starts_with("loaded");
         queue_line({line.data(), static_cast<std::size_t>(size)},
                    success ? core::log::Level::info : core::log::Level::warn);
     }
@@ -175,6 +184,7 @@ bool evaluate(const policy::Binding& binding,
         instance.program.reset(new (std::nothrow) Program);
         const auto status = instance.program
                                 ? vm::open_match_policy(instance.program->value,
+                                                        {g_library.text.data(), g_library.size},
                                                         {source->text.data(), source->size},
                                                         true)
                                 : vm::OpenStatus::outOfMemory;
@@ -225,7 +235,9 @@ bool configure(std::uint32_t modeKey, std::span<const char> source) noexcept {
     const std::unique_ptr<vm::Vm> probe(new (std::nothrow) vm::Vm);
     const bool bounded = !source.empty() && source.size() <= vm::kSourceByteCapacity;
     const auto status =
-        probe && bounded ? vm::open_match_policy(*probe, source) : vm::OpenStatus::invalidProgram;
+        probe && bounded
+            ? vm::open_match_policy(*probe, {g_library.text.data(), g_library.size}, source)
+            : vm::OpenStatus::invalidProgram;
     if (status != vm::OpenStatus::ready && probe && bounded) {
         vm::Snapshot snapshot{};
         vm::snapshot(*probe, snapshot);
@@ -253,34 +265,188 @@ bool configure(std::uint32_t modeKey, std::span<const char> source) noexcept {
     return true;
 }
 
-void load_source(Source& descriptor) noexcept {
-    HMODULE module{};
-    const auto address = reinterpret_cast<LPCWSTR>(&load_source);
-    if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS
-                               | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                           address,
-                           &module)
-        != FALSE) {
-        const HRSRC resource =
-            FindResourceW(module, MAKEINTRESOURCEW(descriptor.resource), RT_RCDATA);
-        const HGLOBAL loaded = resource ? LoadResource(module, resource) : nullptr;
-        const auto* data = loaded ? static_cast<const char*>(LockResource(loaded)) : nullptr;
-        const auto bytes = resource ? SizeofResource(module, resource) : 0;
-        if (data != nullptr && bytes != 0 && configure(descriptor.modeKey, {data, bytes})) {
-            report("source", "bundled", {.modeKey = descriptor.modeKey});
-            return;
+/**
+ * Installs the library every mode's program runs first. Called before ingress starts, from
+ * `initialize`, ahead of every mode it validates.
+ * @param library Lua chunk; an empty or oversized one leaves every mode without a policy.
+ * @return True when the library was installed.
+ */
+bool configure_library(std::span<const char> library) noexcept {
+    const std::lock_guard lock(g_lock);
+    g_library.size = 0;
+    if (library.empty() || library.size() > g_library.text.size()) {
+        return false;
+    }
+    std::copy(library.begin(), library.end(), g_library.text.begin());
+    g_library.size = library.size();
+    return true;
+}
+
+/** Why a policy file could not be read. */
+enum class FileStatus : std::uint8_t { ready, missing, unreadable, tooLarge };
+
+[[nodiscard]] std::string_view file_status_name(FileStatus status) noexcept {
+    switch (status) {
+    case FileStatus::ready:
+        return "ready";
+    case FileStatus::missing:
+        return "missing";
+    case FileStatus::tooLarge:
+        return "too_large";
+    case FileStatus::unreadable:
+        break;
+    }
+    return "unreadable";
+}
+
+/** The folder below a `scripts` folder that holds match policies. */
+constexpr std::wstring_view kMatchesFolder = L"\\matches\\";
+/** Separates a directory from its leaf. */
+constexpr std::wstring_view kPathSeparator = L"\\";
+
+/** Reads one whole file into `g_fileBuffer`. */
+[[nodiscard]] FileStatus read_file(const core::path::Buffer& path, std::size_t& size) noexcept {
+    size = 0;
+    HANDLE file = CreateFileW(path.chars.data(),
+                              GENERIC_READ,
+                              FILE_SHARE_READ | FILE_SHARE_DELETE,
+                              nullptr,
+                              OPEN_EXISTING,
+                              FILE_ATTRIBUTE_NORMAL,
+                              nullptr);
+    if (file == INVALID_HANDLE_VALUE) {
+        const DWORD error = GetLastError();
+        return error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND
+                   ? FileStatus::missing
+                   : FileStatus::unreadable;
+    }
+    LARGE_INTEGER length{};
+    const bool sized = GetFileSizeEx(file, &length) != FALSE;
+    if (!sized || length.QuadPart <= 0
+        || static_cast<unsigned long long>(length.QuadPart) > g_fileBuffer.size()) {
+        CloseHandle(file);
+        return sized ? FileStatus::tooLarge : FileStatus::unreadable;
+    }
+    DWORD read = 0;
+    const auto requested = static_cast<DWORD>(length.QuadPart);
+    const bool loaded = ReadFile(file, g_fileBuffer.data(), requested, &read, nullptr) != FALSE
+                        && read == requested;
+    CloseHandle(file);
+    if (!loaded) {
+        return FileStatus::unreadable;
+    }
+    size = read;
+    return FileStatus::ready;
+}
+
+/** One policy file looked up through the loaded mods. */
+struct ModLookup final {
+    std::wstring_view file;
+    FileStatus status{FileStatus::missing};
+    std::size_t size{};
+};
+
+/**
+ * Reads the policy file from the last loaded mod that ships it.
+ * @return Always true; the lookup status says what was found.
+ */
+[[nodiscard]] bool read_mod_policy(void* opaque, const state::mods::View& view) noexcept {
+    auto& lookup = *static_cast<ModLookup*>(opaque);
+    // A later mod in load order replaces an earlier mod's policy, and every mod replaces the base.
+    for (std::size_t index = view.loadedCount; index-- > 0;) {
+        const state::mods::Record& record = view.records[index];
+        if (!record.hasScripts) {
+            continue;
+        }
+        std::array<wchar_t, state::mods::kFolderCapacity> folder{};
+        const std::string_view text = record.folder.view();
+        std::copy(text.begin(), text.end(), folder.begin());
+        core::path::Buffer path{};
+        if (!core::path::append(path, view.modsDirectory)
+            || !core::path::append(path, kPathSeparator)
+            || !core::path::append(path, {folder.data(), text.size()})
+            || !core::path::append(path, kPathSeparator)
+            || !core::path::append(path, state::mods::kScriptsFolder)
+            || !core::path::append(path, kMatchesFolder)
+            || !core::path::append(path, lookup.file)) {
+            continue;
+        }
+        lookup.status = read_file(path, lookup.size);
+        if (lookup.status != FileStatus::missing) {
+            return true;
         }
     }
+    return true;
+}
+
+/**
+ * Reads one policy file into `g_fileBuffer`, the way mission scripts are found: from the last
+ * loaded mod that ships it, then from `scripts\matches` in the Sunrise folder.
+ */
+[[nodiscard]] FileStatus
+read_policy(std::wstring_view file, std::size_t& size, bool& fromMod) noexcept {
+    size = 0;
+    ModLookup lookup{file};
+    // No published mod list means no mods, so a failed visit leaves the Sunrise folder to read.
+    fromMod = state::mods::visit(&read_mod_policy, &lookup) && lookup.status != FileStatus::missing;
+    if (fromMod) {
+        size = lookup.size;
+        return lookup.status;
+    }
+    HMODULE module{};
+    core::path::Buffer path{};
+    if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS
+                               | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           reinterpret_cast<LPCWSTR>(&read_policy),
+                           &module)
+            == FALSE
+        || !core::path::artifact_directory(module, path)
+        || !core::path::append(path, kPathSeparator)
+        || !core::path::append(path, state::mods::kScriptsFolder)
+        || !core::path::append(path, kMatchesFolder) || !core::path::append(path, file)) {
+        return FileStatus::unreadable;
+    }
+    return read_file(path, size);
+}
+
+void load_source(Source& descriptor) noexcept {
+    std::size_t size = 0;
+    bool fromMod = false;
+    const FileStatus status = read_policy(descriptor.file, size, fromMod);
+    if (status == FileStatus::ready && configure(descriptor.modeKey, {g_fileBuffer.data(), size})) {
+        report("source",
+               fromMod ? "loaded_from_mod" : "loaded",
+               {.modeKey = descriptor.modeKey},
+               descriptor.name);
+        return;
+    }
+    // A mode without a readable, valid policy has no match rules.
     static_cast<void>(configure(descriptor.modeKey, {}));
-    report("source", "bundled_failed", {.modeKey = descriptor.modeKey});
+    report("source",
+           status == FileStatus::ready ? "invalid" : file_status_name(status),
+           {.modeKey = descriptor.modeKey},
+           descriptor.name);
 }
 } // namespace
 
 void initialize() noexcept {
     shutdown();
+    std::size_t size = 0;
+    bool fromMod = false;
+    const FileStatus library = read_policy(g_library.file, size, fromMod);
+    const bool libraryReady =
+        library == FileStatus::ready && configure_library({g_fileBuffer.data(), size});
+    report("source",
+           libraryReady ? (fromMod ? "loaded_from_mod" : "loaded")
+                        : (library == FileStatus::ready ? "invalid" : file_status_name(library)),
+           {},
+           g_library.name);
     for (auto& source : g_sources) {
-        load_source(source);
+        if (libraryReady) {
+            load_source(source);
+        }
     }
+    g_fileBuffer.fill({});
 }
 
 void shutdown() noexcept {
@@ -292,6 +458,8 @@ void shutdown() noexcept {
         source.size = 0;
         source.text.fill({});
     }
+    g_library.size = 0;
+    g_library.text.fill({});
     for (auto& instance : g_instances) {
         retire(instance);
     }
