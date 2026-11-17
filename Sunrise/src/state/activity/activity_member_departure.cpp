@@ -110,7 +110,8 @@ bool replication_sequence(const SessionBinding& binding, std::uint64_t& sequence
 
 bool advance_replication_sequence(const SessionBinding& binding,
                                   std::uint64_t expected,
-                                  const MemberPurge* deliveredPurge) noexcept {
+                                  const MemberPurge* deliveredPurge,
+                                  const RequestedPurge* requestedPurge) noexcept {
     AcquireSRWLockExclusive(&runtime::storage::g_stateLock);
     auto& state = runtime::storage::g_state.activity;
     const auto target = transactions::find_session(state, binding.sessionId);
@@ -141,6 +142,12 @@ bool advance_replication_sequence(const SessionBinding& binding,
             record.memberLeases.purgeRevision[row] = member.revision;
         }
         ++record.memberLeases.replicationSequence;
+        if (requestedPurge && record.sharedMembers) {
+            const auto requester = member_row(
+                record, requestedPurge->memberKey, account_primary_soid(bound_account()));
+            entity_slots::owe_requested_purge(
+                record.memberLeases, requester, requestedPurge->slots);
+        }
         record.recordRevision = ++state.stateRevision;
     }
     ReleaseSRWLockExclusive(&runtime::storage::g_stateLock);

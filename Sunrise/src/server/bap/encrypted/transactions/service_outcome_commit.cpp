@@ -246,11 +246,13 @@ bool commit(ServiceOutcome& outcome, Publication& publication, const char*& reas
         if (plan->mutationDomain == activity_message::MutationDomain::authorityPurge) {
             reason = "authority_purge";
             const auto& purge = plan->authorityPurge;
+            const state::activity::RequestedPurge requested{purge.body.slots, purge.memberKey};
             return purge.pending
                    && state::activity::advance_replication_sequence(
                        purge.binding,
                        purge.expectedSequence,
-                       purge.departure.memberKey ? &purge.departure : nullptr);
+                       purge.departure.memberKey ? &purge.departure : nullptr,
+                       &requested);
         }
         // Epoch and leave delivery are connection state; neither mutates shared State here.
         reason = "mutation_domain";

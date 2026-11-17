@@ -186,6 +186,28 @@ inline void depart_member_lease(MemberLeases& leases, std::size_t row) noexcept 
     leases.joinedRows &= ~(1U << row);
 }
 
+/**
+ * A member's purge request frees its slots for the whole session, so every other joined member
+ * owes the same purge at the step the request advanced to. Without it the other clients keep
+ * their copies of the purged entities, frozen with nobody simulating them.
+ */
+inline void
+owe_requested_purge(MemberLeases& leases, std::size_t requester, const LeaseMask& slots) noexcept {
+    if (requester >= kMemberLeaseRowCount || slot_count(slots) == 0) {
+        return;
+    }
+    for (std::size_t row = 0; row < kMemberLeaseRowCount; ++row) {
+        if (row == requester || !(leases.joinedRows & (1U << row))) {
+            continue;
+        }
+        for (std::size_t index = 0; index < slots.size(); ++index) {
+            leases.purgeOwed[row][index] |= slots[index];
+        }
+        leases.purgeRevision[row] = 0;
+        leases.purgeSequence[row] = leases.replicationSequence;
+    }
+}
+
 /** A later native membership receipt proves the earlier purge crossed the ordered BAP stream. */
 inline void
 acknowledge_member_purge(MemberLeases& leases, std::size_t row, std::uint32_t revision) noexcept {

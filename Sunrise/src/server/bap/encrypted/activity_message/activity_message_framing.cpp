@@ -585,8 +585,9 @@ bool prepare_authority_purge(const ActivityClientBinding& binding,
         || pending.expectedSequence == (std::numeric_limits<std::uint64_t>::max)()) {
         return false;
     }
+    pending.memberKey = state::activity::member_context().memberKey;
     static_cast<void>(state::activity::pending_member_purge(
-        binding.session, state::activity::member_context().memberKey, pending.departure));
+        binding.session, pending.memberKey, pending.departure));
     plan.authorityPurge.body.epoch = static_cast<std::uint8_t>(pending.expectedSequence + 1U);
     plan.authorityPurge.sourceGeneration = binding.bindingGeneration;
     plan.authorityPurge.pending = true;
